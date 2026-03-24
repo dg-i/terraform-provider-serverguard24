@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const defaultAPIEndpoint = "https://www.serverguard24.de/de/api/json.html"
@@ -28,7 +29,7 @@ func NewWithEndpoint(token, endpoint string) *Client {
 	return &Client{
 		token:      token,
 		endpoint:   endpoint,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -37,9 +38,11 @@ type Request map[string]interface{}
 
 // Response is a single response element returned by the API.
 // The API may return "code" as either a JSON string ("100") or a number (100).
+// The message field is named "message" in actual API responses (not "errmessage"
+// as stated in the API documentation).
 type Response struct {
 	Code       json.RawMessage `json:"code"`
-	ErrMessage string          `json:"errmessage"`
+	ErrMessage string          `json:"message"`
 	Data       json.RawMessage `json:"data"`
 }
 
@@ -58,9 +61,14 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 	}
 	req["token"] = c.token
 
-	body := map[string]interface{}{
-		"token":    c.token,
-		"requests": []Request{req},
+	// Use a struct (not a map) to guarantee token appears before requests in the
+	// serialized JSON. The API server appears to require this field ordering.
+	body := struct {
+		Token    string    `json:"token"`
+		Requests []Request `json:"requests"`
+	}{
+		Token:    c.token,
+		Requests: []Request{req},
 	}
 
 	payload, err := json.Marshal(body)
@@ -68,11 +76,7 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	endpoint := defaultAPIEndpoint
-	if c.endpoint != "" {
-		endpoint = c.endpoint
-	}
-	resp, err := c.httpClient.Post(endpoint, "application/json", bytes.NewReader(payload))
+	resp, err := c.httpClient.Post(c.endpoint, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request: %w", err)
 	}
@@ -104,13 +108,17 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 	return r, nil
 }
 
-// IsNotFound returns true when the error represents a missing resource.
-// The API returns code 210 (invalid parameter) when an ID doesn't exist.
+// IsNotFound returns true when the error looks like a missing resource.
+//
+// Limitation: the API uses code 210 ("invalid parameter") both for unknown IDs
+// and for genuinely malformed requests (wrong field type, bad command name, etc.).
+// There is no distinct "not found" code, so this function may return true for
+// parameter errors as well. Resources treat such errors as "gone" and remove
+// the resource from state, which is the safest behaviour given the API design.
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	// API returns 210 for invalid/unknown IDs
 	return strings.Contains(err.Error(), "API error 210")
 }
 
@@ -122,5 +130,13 @@ func IsPermissionError(err error) bool {
 	}
 	return strings.Contains(err.Error(), "API error 220") ||
 		strings.Contains(err.Error(), "API error 270")
+}
+
+// IsAlreadyExists returns true when the API reports the resource already exists (310).
+func IsAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "API error 310")
 }
 

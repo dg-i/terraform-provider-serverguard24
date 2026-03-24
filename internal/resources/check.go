@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -36,6 +37,7 @@ type CheckResourceModel struct {
 	NotifyAfter types.Float64 `tfsdk:"notify_after"`
 	Reminder    types.Float64 `tfsdk:"reminder_interval"`
 	Message     types.String  `tfsdk:"message"`
+	Monitoring  types.Bool    `tfsdk:"monitoring"`
 
 	// Notification flags
 	EmailCritical types.Bool `tfsdk:"email_critical"`
@@ -145,6 +147,11 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"notify_after":     floatOpt("Notify after N minutes of downtime."),
 			"reminder_interval": floatOpt("Reminder interval in hours."),
 			"message":          strOpt("Custom notification message."),
+			"monitoring": schema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Enable or disable monitoring execution for this check. Defaults to `true`. Set to `false` to pause the check without deleting it.",
+			},
 			// Notification flags
 			"email_critical": boolOpt("Send email on critical state."),
 			"email_warning":  boolOpt("Send email on warning state."),
@@ -189,12 +196,12 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"pop_type":             strOpt("POP type for email checks."),
 			"pop_host":             strOpt("POP host for email checks."),
 			"pop_user":             strOpt("POP username for email checks."),
-			"pop_password":         strOpt("POP password for email checks."),
+			"pop_password":         schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "POP password for email checks."},
 			"delete_mode":          strOpt("Delete mode for email checks."),
 			"time_warning":         intOpt("Warning delivery time (s) for email checks."),
 			"time_critical":        intOpt("Critical delivery time (s) for email checks."),
 			"username":             strOpt("Username for database checks."),
-			"password":             strOpt("Password for database checks."),
+			"password":             schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Password for database checks."},
 			"database":             strOpt("Database name."),
 			"sql_query":            strOpt("SQL query to execute."),
 			"mongo_connection":     strOpt("MongoDB connection string."),
@@ -249,6 +256,16 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	plan.ID = types.StringValue(data.ID.String())
+
+	// Apply monitoring state. Defaults to enabled (true) when not set.
+	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Monitoring); err != nil {
+		resp.Diagnostics.AddError("Error setting monitoring state", err.Error())
+		return
+	}
+	if plan.Monitoring.IsNull() || plan.Monitoring.IsUnknown() {
+		plan.Monitoring = types.BoolValue(true)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -272,11 +289,22 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// service_show returns a single object
+	// service_show returns a single object. Flatten nested sub-objects so that
+	// applyCheckData can access all fields at the top level.
 	var raw map[string]interface{}
 	if err := json.Unmarshal(apiResp.Data, &raw); err != nil {
 		resp.Diagnostics.AddError("Error parsing check data", err.Error())
 		return
+	}
+	if params, ok := raw["params"].(map[string]interface{}); ok {
+		for k, v := range params {
+			raw[k] = v
+		}
+	}
+	if notif, ok := raw["notification"].(map[string]interface{}); ok {
+		for k, v := range notif {
+			raw[k] = v
+		}
 	}
 
 	applyCheckData(&state, raw)
@@ -303,6 +331,15 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	plan.ID = state.ID
+
+	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Monitoring); err != nil {
+		resp.Diagnostics.AddError("Error setting monitoring state", err.Error())
+		return
+	}
+	if plan.Monitoring.IsNull() || plan.Monitoring.IsUnknown() {
+		plan.Monitoring = types.BoolValue(true)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -328,9 +365,10 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 }
 
 func buildCheckCommand(command, id string, m CheckResourceModel) client.Request {
+	hostID, _ := strconv.ParseInt(m.HostID.ValueString(), 10, 64)
 	cmd := client.Request{
 		"command": command,
-		"host_id": m.HostID.ValueString(),
+		"host_id": hostID,
 		"type":    m.Type.ValueInt64(),
 	}
 	if id != "" {
@@ -343,9 +381,12 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	setOptionalString(cmd, "region", m.Region)
 	setOptionalString(cmd, "message", m.Message)
 
+	// The API returns HTTP 500 when notification flags or bool fields are sent
+	// as 0. Omitting the field is equivalent to 0 (disabled/false), so we only
+	// send the value when it is explicitly true.
 	setOptionalBoolAsInt := func(key string, v types.Bool) {
-		if !v.IsNull() && !v.IsUnknown() {
-			cmd[key] = boolToInt(v.ValueBool())
+		if !v.IsNull() && !v.IsUnknown() && v.ValueBool() {
+			cmd[key] = 1
 		}
 	}
 	setOptionalFloat := func(key string, v types.Float64) {
@@ -399,7 +440,7 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	setOptionalInt("validity_critical", m.ValidityCritical)
 	setOptionalString(cmd, "expected_ip1", m.ExpectedIP1)
 	setOptionalInt("response_warning", m.ResponseWarning)
-	setOptionalInt("response_critical", m.ResponseCritical)
+	setOptionalInt("response_critial", m.ResponseCritical) // API uses this spelling (typo in API)
 	setOptionalString(cmd, "dns_name", m.DNSName)
 	setOptionalInt("smtp_port", m.SmtpPort)
 	setOptionalString(cmd, "sender", m.Sender)
@@ -432,105 +473,140 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	return cmd
 }
 
+// applyCheckData updates state fields from the API response.
+// Fields that are null in the current state (not configured by the user) are
+// preserved as null so Terraform does not produce spurious diffs.
 func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
-	getString := func(key string) types.String {
+	getString := func(key string, cur types.String) types.String {
+		if cur.IsNull() || cur.IsUnknown() {
+			return cur
+		}
 		if v, ok := raw[key].(string); ok {
 			return types.StringValue(v)
 		}
-		return types.StringNull()
+		return cur // key absent in API response — preserve configured value
 	}
-	getBool := func(key string) types.Bool {
+	getBool := func(key string, cur types.Bool) types.Bool {
+		if cur.IsNull() || cur.IsUnknown() {
+			return cur
+		}
 		switch v := raw[key].(type) {
 		case float64:
 			return types.BoolValue(v == 1)
 		case bool:
 			return types.BoolValue(v)
 		}
-		return types.BoolNull()
+		return cur // key absent in API response — preserve configured value
 	}
-	getFloat := func(key string) types.Float64 {
+	getFloat := func(key string, cur types.Float64) types.Float64 {
+		if cur.IsNull() || cur.IsUnknown() {
+			return cur
+		}
 		if v, ok := raw[key].(float64); ok {
 			return types.Float64Value(v)
 		}
-		return types.Float64Null()
+		return cur // key absent in API response — preserve configured value
 	}
-	getInt := func(key string) types.Int64 {
+	getInt := func(key string, cur types.Int64) types.Int64 {
+		if cur.IsNull() || cur.IsUnknown() {
+			return cur
+		}
 		if v, ok := raw[key].(float64); ok {
 			return types.Int64Value(int64(v))
 		}
-		return types.Int64Null()
+		return cur // key absent in API response — preserve configured value
 	}
 
-	state.Shortname = getString("shortname")
-	state.Description = getString("description")
-	state.Address = getString("address")
-	state.Region = getString("region")
-	state.Message = getString("message")
-	state.IPv6 = getBool("ipv6")
-	state.Interval = getFloat("interval")
-	state.NotifyAfter = getFloat("notify_after")
-	state.Reminder = getFloat("reminder_interval")
-	state.EmailCritical = getBool("email_critical")
-	state.EmailWarning = getBool("email_warning")
-	state.EmailOk = getBool("email_ok")
-	state.EmailRemind = getBool("email_remind")
-	state.SmsCritical = getBool("sms_critical")
-	state.SmsWarning = getBool("sms_warning")
-	state.SmsOk = getBool("sms_ok")
-	state.SmsRemind = getBool("sms_remind")
-	state.PushCritical = getBool("push_critical")
-	state.PushWarning = getBool("push_warning")
-	state.PushOk = getBool("push_ok")
-	state.PushRemind = getBool("push_remind")
-	state.HttpCritical = getBool("http_critical")
-	state.HttpWarning = getBool("http_warning")
-	state.HttpOk = getBool("http_ok")
-	state.HttpRemind = getBool("http_remind")
-	state.PhoneCritical = getBool("phone_critical")
-	state.PhoneWarning = getBool("phone_warning")
-	state.PhoneOk = getBool("phone_ok")
-	state.PhoneRemind = getBool("phone_remind")
-	state.Path = getString("path")
-	state.Timeout = getInt("timeout")
-	state.Port = getInt("port")
-	state.WarningThroughput = getFloat("warning_throughput")
-	state.WarningConnect = getFloat("warning_connect")
-	state.WarningRoundtrip = getFloat("warning_roundtrip")
-	state.CriticalThroughput = getFloat("critical_throughput")
-	state.CriticalConnect = getFloat("critical_connect")
-	state.CriticalRoundtrip = getFloat("critical_roundtrip")
-	state.Protocol = getString("protocol")
-	state.ValidityWarning = getInt("validity_warning")
-	state.ValidityCritical = getInt("validity_critical")
-	state.ExpectedIP1 = getString("expected_ip1")
-	state.ResponseWarning = getInt("response_warning")
-	state.ResponseCritical = getInt("response_critical")
-	state.DNSName = getString("dns_name")
-	state.SmtpPort = getInt("smtp_port")
-	state.Sender = getString("sender")
-	state.Recipient = getString("recipient")
-	state.PopType = getString("pop_type")
-	state.PopHost = getString("pop_host")
-	state.PopUser = getString("pop_user")
-	state.PopPassword = getString("pop_password")
-	state.DeleteMode = getString("delete_mode")
-	state.TimeWarning = getInt("time_warning")
-	state.TimeCritical = getInt("time_critical")
-	state.Username = getString("username")
-	state.Password = getString("password")
-	state.Database = getString("database")
-	state.SQLQuery = getString("sql_query")
-	state.MongoConnection = getString("connection")
-	state.SearchItemOk = getString("searchitem_ok")
-	state.SearchItemCritical = getString("searchitem_critical")
-	state.SearchItemNone = getBool("searchitem_none")
-	state.Command = getString("command")
-	state.Cron = getString("cron")
-	state.Timezone = getString("timezone")
-	state.Token = getString("token")
-	state.TransactionID = getString("transaction_id")
-	state.Definition = getString("definition")
-	state.Language = getString("language")
-	state.PortRange = getString("port_range")
-	state.PortscanNone = getBool("portscan_none")
+	// "active" is always present in service_show; read it unconditionally.
+	if v, ok := raw["active"].(float64); ok {
+		state.Monitoring = types.BoolValue(v == 1)
+	}
+
+	state.Shortname = getString("shortname", state.Shortname)
+	state.Description = getString("description", state.Description)
+	state.Address = getString("address", state.Address)
+	state.Region = getString("region", state.Region)
+	state.Message = getString("message", state.Message)
+	state.IPv6 = getBool("ipv6", state.IPv6)
+	state.Interval = getFloat("interval", state.Interval)
+	state.NotifyAfter = getFloat("notify_after", state.NotifyAfter)
+	state.Reminder = getFloat("reminder_interval", state.Reminder)
+	state.EmailCritical = getBool("email_critical", state.EmailCritical)
+	state.EmailWarning = getBool("email_warning", state.EmailWarning)
+	state.EmailOk = getBool("email_ok", state.EmailOk)
+	state.EmailRemind = getBool("email_remind", state.EmailRemind)
+	state.SmsCritical = getBool("sms_critical", state.SmsCritical)
+	state.SmsWarning = getBool("sms_warning", state.SmsWarning)
+	state.SmsOk = getBool("sms_ok", state.SmsOk)
+	state.SmsRemind = getBool("sms_remind", state.SmsRemind)
+	state.PushCritical = getBool("push_critical", state.PushCritical)
+	state.PushWarning = getBool("push_warning", state.PushWarning)
+	state.PushOk = getBool("push_ok", state.PushOk)
+	state.PushRemind = getBool("push_remind", state.PushRemind)
+	state.HttpCritical = getBool("http_critical", state.HttpCritical)
+	state.HttpWarning = getBool("http_warning", state.HttpWarning)
+	state.HttpOk = getBool("http_ok", state.HttpOk)
+	state.HttpRemind = getBool("http_remind", state.HttpRemind)
+	state.PhoneCritical = getBool("phone_critical", state.PhoneCritical)
+	state.PhoneWarning = getBool("phone_warning", state.PhoneWarning)
+	state.PhoneOk = getBool("phone_ok", state.PhoneOk)
+	state.PhoneRemind = getBool("phone_remind", state.PhoneRemind)
+	state.Path = getString("path", state.Path)
+	state.Timeout = getInt("timeout", state.Timeout)
+	state.Port = getInt("port", state.Port)
+	state.WarningThroughput = getFloat("warning_throughput", state.WarningThroughput)
+	state.WarningConnect = getFloat("warning_connect", state.WarningConnect)
+	state.WarningRoundtrip = getFloat("warning_roundtrip", state.WarningRoundtrip)
+	state.CriticalThroughput = getFloat("critical_throughput", state.CriticalThroughput)
+	state.CriticalConnect = getFloat("critical_connect", state.CriticalConnect)
+	state.CriticalRoundtrip = getFloat("critical_roundtrip", state.CriticalRoundtrip)
+	state.Protocol = getString("protocol", state.Protocol)
+	state.ValidityWarning = getInt("validity_warning", state.ValidityWarning)
+	state.ValidityCritical = getInt("validity_critical", state.ValidityCritical)
+	state.ExpectedIP1 = getString("expected_ip1", state.ExpectedIP1)
+	state.ResponseWarning = getInt("response_warning", state.ResponseWarning)
+	state.ResponseCritical = getInt("response_critial", state.ResponseCritical) // API uses this spelling (typo in API)
+	state.DNSName = getString("dns_name", state.DNSName)
+	state.SmtpPort = getInt("smtp_port", state.SmtpPort)
+	state.Sender = getString("sender", state.Sender)
+	state.Recipient = getString("recipient", state.Recipient)
+	state.PopType = getString("pop_type", state.PopType)
+	state.PopHost = getString("pop_host", state.PopHost)
+	state.PopUser = getString("pop_user", state.PopUser)
+	state.PopPassword = getString("pop_password", state.PopPassword)
+	state.DeleteMode = getString("delete_mode", state.DeleteMode)
+	state.TimeWarning = getInt("time_warning", state.TimeWarning)
+	state.TimeCritical = getInt("time_critical", state.TimeCritical)
+	state.Username = getString("username", state.Username)
+	state.Password = getString("password", state.Password)
+	state.Database = getString("database", state.Database)
+	state.SQLQuery = getString("sql_query", state.SQLQuery)
+	state.MongoConnection = getString("connection", state.MongoConnection)
+	state.SearchItemOk = getString("searchitem_ok", state.SearchItemOk)
+	state.SearchItemCritical = getString("searchitem_critical", state.SearchItemCritical)
+	state.SearchItemNone = getBool("searchitem_none", state.SearchItemNone)
+	state.Command = getString("command", state.Command)
+	state.Cron = getString("cron", state.Cron)
+	state.Timezone = getString("timezone", state.Timezone)
+	state.Token = getString("token", state.Token)
+	state.TransactionID = getString("transaction_id", state.TransactionID)
+	state.Definition = getString("definition", state.Definition)
+	state.Language = getString("language", state.Language)
+	state.PortRange = getString("port_range", state.PortRange)
+	state.PortscanNone = getBool("portscan_none", state.PortscanNone)
+}
+
+// applyMonitoring calls service_monitoring to enable or disable check execution.
+// When monitoring is null/unknown (not configured), it defaults to enabled (1).
+func (r *CheckResource) applyMonitoring(id string, monitoring types.Bool) error {
+	val := 1
+	if !monitoring.IsNull() && !monitoring.IsUnknown() && !monitoring.ValueBool() {
+		val = 0
+	}
+	_, err := r.client.Do(client.Request{
+		"command":    "service_monitoring",
+		"id":         id,
+		"monitoring": val,
+	})
+	return err
 }

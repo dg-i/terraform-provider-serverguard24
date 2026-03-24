@@ -23,8 +23,13 @@ type NodesDataSourceModel struct {
 }
 
 type NodeModel struct {
-	ID   types.String `tfsdk:"id"`
-	Name types.String `tfsdk:"name"`
+	IPv4        types.String `tfsdk:"ipv4"`
+	IPv6        types.String `tfsdk:"ipv6"`
+	Location    types.String `tfsdk:"location"`
+	Country     types.String `tfsdk:"country"`
+	CountryCode types.String `tfsdk:"country_code"`
+	Region      types.String `tfsdk:"region"`
+	RegionCode  types.String `tfsdk:"region_code"`
 }
 
 func NewNodesDataSource() datasource.DataSource {
@@ -37,14 +42,19 @@ func (d *NodesDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 func (d *NodesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Retrieves all available Serverguard24 monitoring nodes.",
+		MarkdownDescription: "Retrieves all available Serverguard24 monitoring nodes (probe locations).",
 		Attributes: map[string]schema.Attribute{
 			"nodes": schema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id":   schema.StringAttribute{Computed: true},
-						"name": schema.StringAttribute{Computed: true},
+						"ipv4":         schema.StringAttribute{Computed: true},
+						"ipv6":         schema.StringAttribute{Computed: true},
+						"location":     schema.StringAttribute{Computed: true},
+						"country":      schema.StringAttribute{Computed: true},
+						"country_code": schema.StringAttribute{Computed: true},
+						"region":       schema.StringAttribute{Computed: true},
+						"region_code":  schema.StringAttribute{Computed: true},
 					},
 				},
 			},
@@ -76,7 +86,15 @@ func (d *NodesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, re
 		return
 	}
 
-	var raw []map[string]interface{}
+	var raw []struct {
+		IPv4        string `json:"ipv4"`
+		IPv6        string `json:"ipv6"`
+		Location    string `json:"location"`
+		Country     string `json:"country"`
+		CountryCode string `json:"country_code"`
+		Region      string `json:"region"`
+		RegionCode  string `json:"region_code"`
+	}
 	if err := json.Unmarshal(apiResp.Data, &raw); err != nil {
 		resp.Diagnostics.AddError("Error parsing nodes", err.Error())
 		return
@@ -84,11 +102,14 @@ func (d *NodesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, re
 
 	var state NodesDataSourceModel
 	for _, item := range raw {
-		id := fmt.Sprintf("%v", item["id"])
-		name, _ := item["name"].(string)
 		state.Nodes = append(state.Nodes, NodeModel{
-			ID:   types.StringValue(id),
-			Name: types.StringValue(name),
+			IPv4:        types.StringValue(item.IPv4),
+			IPv6:        types.StringValue(item.IPv6),
+			Location:    types.StringValue(item.Location),
+			Country:     types.StringValue(item.Country),
+			CountryCode: types.StringValue(item.CountryCode),
+			Region:      types.StringValue(item.Region),
+			RegionCode:  types.StringValue(item.RegionCode),
 		})
 	}
 

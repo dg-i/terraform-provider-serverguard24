@@ -8,7 +8,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -61,24 +63,29 @@ func (r *DowntimeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"starttime": schema.Int64Attribute{
 				Required:            true,
 				MarkdownDescription: "Start time as Unix timestamp.",
+				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
 			},
 			"endtime": schema.Int64Attribute{
 				Required:            true,
 				MarkdownDescription: "End time as Unix timestamp.",
+				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
 			},
 			"description": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Description of the maintenance window.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"type": schema.Int64Attribute{
 				Optional:            true,
 				Computed:            true,
 				Default:             int64default.StaticInt64(1),
 				MarkdownDescription: "Downtime type (default: 1).",
+				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
 			},
 			"readonly": schema.BoolAttribute{
 				Optional:            true,
 				MarkdownDescription: "Mark downtime as read-only.",
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
 			},
 			"services": schema.ListAttribute{
 				Optional:            true,
@@ -127,27 +134,41 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 
 	apiResp, err := r.client.Do(cmd)
 	if err != nil {
-		resp.Diagnostics.AddError("Error creating downtime", err.Error())
-		return
+		if client.IsAlreadyExists(err) {
+			// The API has no delete, so a previously-untracked downtime with the
+			// same params may still exist. Look it up by description to adopt it.
+			id, lookupErr := findDowntimeByDescription(r.client, plan.Description.ValueString())
+			if lookupErr != nil {
+				resp.Diagnostics.AddError("Downtime already exists and lookup failed", lookupErr.Error())
+				return
+			}
+			if id == "" {
+				resp.Diagnostics.AddError("Downtime already exists", "Could not locate the existing downtime by description. Remove it manually in the Serverguard24 UI.")
+				return
+			}
+			plan.ID = types.StringValue(id)
+		} else {
+			resp.Diagnostics.AddError("Error creating downtime", err.Error())
+			return
+		}
+	} else {
+		var data struct {
+			ID json.Number `json:"dt_id"` // downtime_add returns "dt_id", not "id"
+		}
+		if err := json.Unmarshal(apiResp.Data, &data); err != nil {
+			resp.Diagnostics.AddError("Error parsing downtime ID", err.Error())
+			return
+		}
+		plan.ID = types.StringValue(data.ID.String())
 	}
-
-	var data struct {
-		ID json.Number `json:"id"`
-	}
-	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
-		resp.Diagnostics.AddError("Error parsing downtime ID", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(data.ID.String())
 
 	// Link services
 	if !plan.Services.IsNull() && !plan.Services.IsUnknown() {
 		for _, svcID := range listToInts(ctx, plan.Services) {
 			if _, err := r.client.Do(client.Request{
 				"command":     "downtime_link",
-				"downtime_id": plan.ID.ValueString(),
-				"service_id":  svcID,
+				"id":         plan.ID.ValueString(),
+				"service_id": svcID,
 			}); err != nil {
 				resp.Diagnostics.AddError("Error linking service to downtime", err.Error())
 				return
@@ -160,8 +181,8 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 		for _, hostID := range listToInts(ctx, plan.Hosts) {
 			if _, err := r.client.Do(client.Request{
 				"command":     "downtime_link",
-				"downtime_id": plan.ID.ValueString(),
-				"host_id":     hostID,
+				"id":      plan.ID.ValueString(),
+				"host_id": hostID,
 			}); err != nil {
 				resp.Diagnostics.AddError("Error linking host to downtime", err.Error())
 				return
@@ -180,9 +201,8 @@ func (r *DowntimeResource) Read(ctx context.Context, req resource.ReadRequest, r
 }
 
 func (r *DowntimeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// The API has no downtime_edit; all mutable fields should trigger ForceNew
-	// via the plan modifier on hostname. For other field changes the resource
-	// will be recreated by Terraform (destroy + create).
+	// All mutable fields have RequiresReplace, so Terraform should never call
+	// Update. If it does, surface an error rather than silently succeeding.
 	resp.Diagnostics.AddError(
 		"Update not supported",
 		"Serverguard24 does not support editing downtimes. Please destroy and recreate.",
@@ -198,28 +218,37 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	// Attempt to unlink services/hosts
+	// Attempt to unlink services/hosts. The downtime record itself cannot be
+	// deleted via the API; Terraform removes it from state after this returns.
 	if !state.Services.IsNull() {
 		for _, svcID := range listToInts(ctx, state.Services) {
-			r.client.Do(client.Request{ //nolint:errcheck
+			if _, err := r.client.Do(client.Request{
 				"command":     "downtime_unlink",
-				"downtime_id": state.ID.ValueString(),
-				"service_id":  svcID,
-			})
+				"id":         state.ID.ValueString(),
+				"service_id": svcID,
+			}); err != nil {
+				resp.Diagnostics.AddWarning(
+					"Failed to unlink service from downtime",
+					fmt.Sprintf("service_id %d: %s — the link may persist in Serverguard24.", svcID, err),
+				)
+			}
 		}
 	}
 	if !state.Hosts.IsNull() {
 		for _, hostID := range listToInts(ctx, state.Hosts) {
-			r.client.Do(client.Request{ //nolint:errcheck
+			if _, err := r.client.Do(client.Request{
 				"command":     "downtime_unlink",
-				"downtime_id": state.ID.ValueString(),
-				"host_id":     hostID,
-			})
+				"id":      state.ID.ValueString(),
+				"host_id": hostID,
+			}); err != nil {
+				resp.Diagnostics.AddWarning(
+					"Failed to unlink host from downtime",
+					fmt.Sprintf("host_id %d: %s — the link may persist in Serverguard24.", hostID, err),
+				)
+			}
 		}
 	}
 
-	// Note: the downtime record itself cannot be deleted via API.
-	// Terraform will remove it from state after this function returns.
 }
 
 // ImportState imports an existing downtime by ID. The API has no downtime_show;
@@ -242,4 +271,26 @@ func (r *DowntimeResource) ImportState(ctx context.Context, req resource.ImportS
 // emptyList returns an empty typed list for Int64.
 func emptyList() types.List {
 	return types.ListValueMust(types.Int64Type, []attr.Value{})
+}
+
+// findDowntimeByDescription looks up all downtimes and returns the ID of the
+// first one whose description matches. Returns "" if none match.
+func findDowntimeByDescription(c *client.Client, description string) (string, error) {
+	apiResp, err := c.Do(client.Request{"command": "get_downtimes"})
+	if err != nil {
+		return "", fmt.Errorf("get_downtimes: %w", err)
+	}
+	var items []struct {
+		ID          json.Number `json:"id"`
+		Description string      `json:"description"`
+	}
+	if err := json.Unmarshal(apiResp.Data, &items); err != nil {
+		return "", fmt.Errorf("parsing get_downtimes response: %w", err)
+	}
+	for _, item := range items {
+		if item.Description == description {
+			return item.ID.String(), nil
+		}
+	}
+	return "", nil
 }

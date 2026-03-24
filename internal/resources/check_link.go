@@ -3,9 +3,11 @@ package resources
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -37,338 +39,156 @@ func parseLinkID(id, resourceName string) (checkID, secondID string, diags diag.
 	return checkID, secondID, diags
 }
 
-// CheckContactLinkResource links a check to a contact.
-type CheckContactLinkResource struct {
-	client *client.Client
+// linkResource is a generic implementation for check link resources.
+// All three link types (contact, distributor, integration) are structurally
+// identical and differ only in the second field name and API commands.
+type linkResource struct {
+	client      *client.Client
+	typeSuffix  string // e.g. "_check_contact_link"
+	secondField string // e.g. "contact_id"
+	linkCmd     string // e.g. "service_link_contact"
+	unlinkCmd   string // e.g. "service_unlink_contact"
+	description string
 }
 
-type CheckContactLinkModel struct {
-	ID        types.String `tfsdk:"id"`
-	CheckID   types.String `tfsdk:"check_id"`
-	ContactID types.String `tfsdk:"contact_id"`
+var _ resource.ResourceWithImportState = &linkResource{}
+
+func (r *linkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + r.typeSuffix
 }
 
-var _ resource.ResourceWithImportState = &CheckContactLinkResource{}
+func (r *linkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: r.description,
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"check_id": schema.StringAttribute{
+				Required:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			r.secondField: schema.StringAttribute{
+				Required:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+		},
+	}
+}
+
+func (r *linkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*client.Client)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data type", fmt.Sprintf("got %T", req.ProviderData))
+		return
+	}
+	r.client = c
+}
+
+func (r *linkResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var checkID, secondID types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("check_id"), &checkID)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root(r.secondField), &secondID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	svcIDInt, _ := strconv.ParseInt(checkID.ValueString(), 10, 64)
+	secondIDInt, _ := strconv.ParseInt(secondID.ValueString(), 10, 64)
+	if _, err := r.client.Do(client.Request{
+		"command":     r.linkCmd,
+		"id":          svcIDInt,
+		r.secondField: secondIDInt,
+	}); err != nil {
+		resp.Diagnostics.AddError("Error creating link", err.Error())
+		return
+	}
+
+	id := types.StringValue(checkID.ValueString() + "/" + secondID.ValueString())
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("check_id"), checkID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root(r.secondField), secondID)...)
+}
+
+func (r *linkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	// No read API exists for links; pass state through unchanged.
+	var id, checkID, secondID types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &id)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("check_id"), &checkID)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(r.secondField), &secondID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("check_id"), checkID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root(r.secondField), secondID)...)
+}
+
+func (r *linkResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.AddError("Update not supported", "Links are immutable; destroy and recreate.")
+}
+
+func (r *linkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var checkID, secondID types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("check_id"), &checkID)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(r.secondField), &secondID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	svcIDInt, _ := strconv.ParseInt(checkID.ValueString(), 10, 64)
+	secondIDInt, _ := strconv.ParseInt(secondID.ValueString(), 10, 64)
+	if _, err := r.client.Do(client.Request{
+		"command":     r.unlinkCmd,
+		"id":          svcIDInt,
+		r.secondField: secondIDInt,
+	}); err != nil {
+		resp.Diagnostics.AddError("Error deleting link", err.Error())
+	}
+}
+
+func (r *linkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	checkID, secondID, diags := parseLinkID(req.ID, "serverguard24"+r.typeSuffix)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := checkID + "/" + secondID
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), types.StringValue(id))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("check_id"), types.StringValue(checkID))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root(r.secondField), types.StringValue(secondID))...)
+}
 
 func NewCheckContactLinkResource() resource.Resource {
-	return &CheckContactLinkResource{}
-}
-
-func (r *CheckContactLinkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_check_contact_link"
-}
-
-func (r *CheckContactLinkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{
-		MarkdownDescription: "Links a monitoring check to a contact.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"check_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"contact_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-		},
+	return &linkResource{
+		typeSuffix:  "_check_contact_link",
+		secondField: "contact_id",
+		linkCmd:     "service_link_contact",
+		unlinkCmd:   "service_unlink_contact",
+		description: "Links a monitoring check to a contact.",
 	}
 }
-
-func (r *CheckContactLinkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data type", fmt.Sprintf("got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-func (r *CheckContactLinkResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan CheckContactLinkModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":    "service_link_contact",
-		"service_id": plan.CheckID.ValueString(),
-		"contact_id": plan.ContactID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error linking check to contact", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(plan.CheckID.ValueString() + "/" + plan.ContactID.ValueString())
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-}
-
-func (r *CheckContactLinkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state CheckContactLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-func (r *CheckContactLinkResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Update not supported", "Links are immutable; destroy and recreate.")
-}
-
-func (r *CheckContactLinkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state CheckContactLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":    "service_unlink_contact",
-		"service_id": state.CheckID.ValueString(),
-		"contact_id": state.ContactID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error unlinking check from contact", err.Error())
-	}
-}
-
-func (r *CheckContactLinkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	checkID, contactID, diags := parseLinkID(req.ID, "serverguard24_check_contact_link")
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &CheckContactLinkModel{
-		ID:        types.StringValue(checkID + "/" + contactID),
-		CheckID:   types.StringValue(checkID),
-		ContactID: types.StringValue(contactID),
-	})...)
-}
-
-// CheckDistributorLinkResource links a check to a distributor.
-type CheckDistributorLinkResource struct {
-	client *client.Client
-}
-
-type CheckDistributorLinkModel struct {
-	ID             types.String `tfsdk:"id"`
-	CheckID        types.String `tfsdk:"check_id"`
-	DistributorID  types.String `tfsdk:"distributor_id"`
-}
-
-var _ resource.ResourceWithImportState = &CheckDistributorLinkResource{}
 
 func NewCheckDistributorLinkResource() resource.Resource {
-	return &CheckDistributorLinkResource{}
-}
-
-func (r *CheckDistributorLinkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_check_distributor_link"
-}
-
-func (r *CheckDistributorLinkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{
-		MarkdownDescription: "Links a monitoring check to a distributor.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"check_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"distributor_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-		},
+	return &linkResource{
+		typeSuffix:  "_check_distributor_link",
+		secondField: "distributor_id",
+		linkCmd:     "service_link_distributor",
+		unlinkCmd:   "service_unlink_distributor",
+		description: "Links a monitoring check to a distributor.",
 	}
 }
-
-func (r *CheckDistributorLinkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data type", fmt.Sprintf("got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-func (r *CheckDistributorLinkResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan CheckDistributorLinkModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":        "service_link_distributor",
-		"service_id":     plan.CheckID.ValueString(),
-		"distributor_id": plan.DistributorID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error linking check to distributor", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(plan.CheckID.ValueString() + "/" + plan.DistributorID.ValueString())
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-}
-
-func (r *CheckDistributorLinkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state CheckDistributorLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-func (r *CheckDistributorLinkResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Update not supported", "Links are immutable; destroy and recreate.")
-}
-
-func (r *CheckDistributorLinkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state CheckDistributorLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":        "service_unlink_distributor",
-		"service_id":     state.CheckID.ValueString(),
-		"distributor_id": state.DistributorID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error unlinking check from distributor", err.Error())
-	}
-}
-
-func (r *CheckDistributorLinkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	checkID, distributorID, diags := parseLinkID(req.ID, "serverguard24_check_distributor_link")
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &CheckDistributorLinkModel{
-		ID:             types.StringValue(checkID + "/" + distributorID),
-		CheckID:        types.StringValue(checkID),
-		DistributorID:  types.StringValue(distributorID),
-	})...)
-}
-
-// CheckIntegrationLinkResource links a check to an integration.
-type CheckIntegrationLinkResource struct {
-	client *client.Client
-}
-
-type CheckIntegrationLinkModel struct {
-	ID            types.String `tfsdk:"id"`
-	CheckID       types.String `tfsdk:"check_id"`
-	IntegrationID types.String `tfsdk:"integration_id"`
-}
-
-var _ resource.ResourceWithImportState = &CheckIntegrationLinkResource{}
 
 func NewCheckIntegrationLinkResource() resource.Resource {
-	return &CheckIntegrationLinkResource{}
-}
-
-func (r *CheckIntegrationLinkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_check_integration_link"
-}
-
-func (r *CheckIntegrationLinkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{
-		MarkdownDescription: "Links a monitoring check to an integration.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
-			"check_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"integration_id": schema.StringAttribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-		},
+	return &linkResource{
+		typeSuffix:  "_check_integration_link",
+		secondField: "integration_id",
+		linkCmd:     "service_link_integration",
+		unlinkCmd:   "service_unlink_integration",
+		description: "Links a monitoring check to an integration.",
 	}
-}
-
-func (r *CheckIntegrationLinkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*client.Client)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data type", fmt.Sprintf("got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-func (r *CheckIntegrationLinkResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan CheckIntegrationLinkModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":        "service_link_integration",
-		"service_id":     plan.CheckID.ValueString(),
-		"integration_id": plan.IntegrationID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error linking check to integration", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(plan.CheckID.ValueString() + "/" + plan.IntegrationID.ValueString())
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-}
-
-func (r *CheckIntegrationLinkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state CheckIntegrationLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-func (r *CheckIntegrationLinkResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Update not supported", "Links are immutable; destroy and recreate.")
-}
-
-func (r *CheckIntegrationLinkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state CheckIntegrationLinkModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if _, err := r.client.Do(client.Request{
-		"command":        "service_unlink_integration",
-		"service_id":     state.CheckID.ValueString(),
-		"integration_id": state.IntegrationID.ValueString(),
-	}); err != nil {
-		resp.Diagnostics.AddError("Error unlinking check from integration", err.Error())
-	}
-}
-
-func (r *CheckIntegrationLinkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	checkID, integrationID, diags := parseLinkID(req.ID, "serverguard24_check_integration_link")
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &CheckIntegrationLinkModel{
-		ID:            types.StringValue(checkID + "/" + integrationID),
-		CheckID:       types.StringValue(checkID),
-		IntegrationID: types.StringValue(integrationID),
-	})...)
 }

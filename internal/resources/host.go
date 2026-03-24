@@ -131,7 +131,7 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	var hosts []struct {
 		ID      json.Number `json:"id"`
-		Name    string      `json:"name"`
+		Name    string      `json:"alias"` // API returns name field as "alias"
 		Address string      `json:"address"`
 		Groups  []int64     `json:"groups"`
 	}
@@ -139,12 +139,23 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("Error parsing host data", err.Error())
 		return
 	}
-	if len(hosts) == 0 {
+	// The API returns all hosts regardless of the id filter; find the matching one.
+	var h *struct {
+		ID      json.Number `json:"id"`
+		Name    string      `json:"alias"` // API returns name field as "alias"
+		Address string      `json:"address"`
+		Groups  []int64     `json:"groups"`
+	}
+	for i := range hosts {
+		if hosts[i].ID.String() == state.ID.ValueString() {
+			h = &hosts[i]
+			break
+		}
+	}
+	if h == nil {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-
-	h := hosts[0]
 	state.Name = types.StringValue(h.Name)
 	state.Address = types.StringValue(h.Address)
 	if len(h.Groups) > 0 {
@@ -155,7 +166,9 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		list, diags := types.ListValue(types.Int64Type, elems)
 		resp.Diagnostics.Append(diags...)
 		state.Groups = list
-	} else {
+	} else if !state.Groups.IsNull() {
+		// API returned empty groups; only update state if groups was already configured
+		// (non-null). If config omits groups, preserve null to avoid a perpetual diff.
 		state.Groups = types.ListValueMust(types.Int64Type, []attr.Value{})
 	}
 

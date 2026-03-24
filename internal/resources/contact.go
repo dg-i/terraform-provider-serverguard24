@@ -139,7 +139,7 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	var contacts []struct {
+	type contactItem struct {
 		ID       json.Number `json:"id"`
 		Name     string      `json:"name"`
 		Language string      `json:"language"`
@@ -148,21 +148,28 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 		Network  string      `json:"network"`
 		Standard int         `json:"standard"`
 	}
+	var contacts []contactItem
 	if err := json.Unmarshal(apiResp.Data, &contacts); err != nil {
 		resp.Diagnostics.AddError("Error parsing contact data", err.Error())
 		return
 	}
-	if len(contacts) == 0 {
+	// The API returns all contacts regardless of the id filter; find the matching one.
+	var c *contactItem
+	for i := range contacts {
+		if contacts[i].ID.String() == state.ID.ValueString() {
+			c = &contacts[i]
+			break
+		}
+	}
+	if c == nil {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-
-	c := contacts[0]
 	state.Name = types.StringValue(c.Name)
 	state.Language = types.StringValue(c.Language)
-	state.Email = types.StringValue(c.Email)
-	state.Mobile = types.StringValue(c.Mobile)
-	state.Network = types.StringValue(c.Network)
+	state.Email = nullableString(c.Email)
+	state.Mobile = nullableString(c.Mobile)
+	state.Network = nullableString(c.Network)
 	state.Standard = types.BoolValue(c.Standard == 1)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -237,4 +244,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// nullableString returns types.StringNull() when s is empty, so that optional
+// fields the API did not set do not produce a perpetual diff against null config.
+func nullableString(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }
