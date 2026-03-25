@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -95,12 +94,4 @@ func (d *DistributorsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-// attrTypes returns the attr.Type map for a distributor object (used in list construction).
-func distributorAttrTypes() map[string]attr.Type {
-	return map[string]attr.Type{
-		"id":   types.StringType,
-		"name": types.StringType,
-	}
 }
