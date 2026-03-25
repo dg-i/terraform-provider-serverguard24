@@ -10,9 +10,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/datasources"
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/resources"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/datasources"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/resources"
 )
 
 var _ provider.Provider = &Serverguard24Provider{}
@@ -38,9 +38,11 @@ func (p *Serverguard24Provider) Metadata(_ context.Context, _ provider.MetadataR
 
 func (p *Serverguard24Provider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Provider for managing Serverguard24 monitoring resources.",
 		MarkdownDescription: "Provider for managing Serverguard24 monitoring resources.",
 		Attributes: map[string]schema.Attribute{
 			"api_token": schema.StringAttribute{
+				Description:         "Serverguard24 API token. Can also be set via the SG24_API_TOKEN environment variable.",
 				MarkdownDescription: "Serverguard24 API token. Can also be set via the `SG24_API_TOKEN` environment variable.",
 				Optional:            true,
 				Sensitive:           true,
@@ -69,7 +71,7 @@ func (p *Serverguard24Provider) Configure(ctx context.Context, req provider.Conf
 		return
 	}
 
-	c := client.New(token)
+	c := client.New(token, p.version)
 	resp.DataSourceData = c
 	resp.ResourceData = c
 }

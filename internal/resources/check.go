@@ -4,16 +4,110 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
+
+// checkTypeByName maps human-readable type names to the API integer IDs.
+var checkTypeByName = map[string]int64{
+	"http":             11,
+	"http_perf":        13,
+	"site_perf":        15,
+	"ssl_cert":         14,
+	"domain":           91,
+	"ping":             40,
+	"ssh":              60,
+	"ftp":              20,
+	"tcp":              80,
+	"dns":              90,
+	"smtp":             51,
+	"pop3":             50,
+	"imap":             52,
+	"email":            53,
+	"blacklist":        54,
+	"mysql":            70,
+	"postgresql":       72,
+	"mssql":            73,
+	"mongodb":          74,
+	"local_web":        110,
+	"local":            100,
+	"intranet":         101,
+	"cron":             102,
+	"system":           103,
+	"transact_server":  120,
+	"transact_browser": 121,
+	"selenium":         122,
+	"postman":          123,
+	"port_scan":        130,
+}
+
+// checkTypeByID is the reverse of checkTypeByName, built at init time.
+var checkTypeByID = func() map[int64]string {
+	m := make(map[int64]string, len(checkTypeByName))
+	for name, id := range checkTypeByName {
+		m[id] = name
+	}
+	return m
+}()
+
+// validCheckTypes returns a sorted slice of all valid type names for use in
+// error messages and validators.
+func validCheckTypes() []string {
+	names := make([]string, 0, len(checkTypeByName))
+	for name := range checkTypeByName {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func joinStrings(ss []string, sep string) string {
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += sep
+		}
+		result += s
+	}
+	return result
+}
+
+// checkTypeValidator validates that the type attribute is a known check type name.
+type checkTypeValidator struct{}
+
+func (v checkTypeValidator) Description(_ context.Context) string {
+	return "must be a valid check type name"
+}
+
+func (v checkTypeValidator) MarkdownDescription(_ context.Context) string {
+	return "must be one of: `" + joinStrings(validCheckTypes(), "`, `") + "`"
+}
+
+func (v checkTypeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if _, ok := checkTypeByName[req.ConfigValue.ValueString()]; !ok {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid check type",
+			fmt.Sprintf("%q is not a valid check type. Valid values: %s",
+				req.ConfigValue.ValueString(),
+				joinStrings(validCheckTypes(), ", "),
+			),
+		)
+	}
+}
 
 var _ resource.Resource = &CheckResource{}
 var _ resource.ResourceWithImportState = &CheckResource{}
@@ -26,8 +120,8 @@ type CheckResource struct {
 // Type-specific fields are set only when relevant.
 type CheckResourceModel struct {
 	ID          types.String  `tfsdk:"id"`
-	HostID      types.String  `tfsdk:"host_id"`
-	Type        types.Int64   `tfsdk:"type"`
+	HostID      types.String `tfsdk:"host_id"`
+	Type        types.String `tfsdk:"type"`
 	Shortname   types.String  `tfsdk:"shortname"`
 	Description types.String  `tfsdk:"description"`
 	Address     types.String  `tfsdk:"address"`
@@ -37,7 +131,8 @@ type CheckResourceModel struct {
 	NotifyAfter types.Float64 `tfsdk:"notify_after"`
 	Reminder    types.Float64 `tfsdk:"reminder_interval"`
 	Message     types.String  `tfsdk:"message"`
-	Monitoring  types.Bool    `tfsdk:"monitoring"`
+	Active       types.Bool `tfsdk:"active"`
+	Notification types.Bool `tfsdk:"notification"`
 
 	// Notification flags
 	EmailCritical types.Bool `tfsdk:"email_critical"`
@@ -117,27 +212,34 @@ func (r *CheckResource) Metadata(_ context.Context, req resource.MetadataRequest
 
 func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	boolOpt := func(desc string) schema.BoolAttribute {
-		return schema.BoolAttribute{Optional: true, MarkdownDescription: desc}
+		return schema.BoolAttribute{Optional: true, Description: desc, MarkdownDescription: desc}
 	}
 	strOpt := func(desc string) schema.StringAttribute {
-		return schema.StringAttribute{Optional: true, MarkdownDescription: desc}
+		return schema.StringAttribute{Optional: true, Description: desc, MarkdownDescription: desc}
 	}
 	intOpt := func(desc string) schema.Int64Attribute {
-		return schema.Int64Attribute{Optional: true, MarkdownDescription: desc}
+		return schema.Int64Attribute{Optional: true, Description: desc, MarkdownDescription: desc}
 	}
 	floatOpt := func(desc string) schema.Float64Attribute {
-		return schema.Float64Attribute{Optional: true, MarkdownDescription: desc}
+		return schema.Float64Attribute{Optional: true, Description: desc, MarkdownDescription: desc}
 	}
 
 	resp.Schema = schema.Schema{
+		Description:         "Manages a Serverguard24 monitoring check.",
 		MarkdownDescription: "Manages a Serverguard24 monitoring check.",
+		Version:             0,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
-			"host_id":          schema.StringAttribute{Required: true, MarkdownDescription: "ID of the host this check belongs to."},
-			"type":             schema.Int64Attribute{Required: true, MarkdownDescription: "Check type ID (e.g. 11=HTTP, 40=PING, 60=SSH)."},
+			"host_id": schema.StringAttribute{Required: true, Description: "ID of the host this check belongs to.", MarkdownDescription: "ID of the host this check belongs to."},
+			"type": schema.StringAttribute{
+				Required:            true,
+				Description:         "Check type name (e.g. http, ping, ssl_cert).",
+				MarkdownDescription: "Check type. Valid values: `" + joinStrings(validCheckTypes(), "`, `") + "`.",
+				Validators:          []validator.String{checkTypeValidator{}},
+			},
 			"shortname":        strOpt("Short display name (max 40 characters)."),
 			"description":      strOpt("Description of this check."),
 			"address":          strOpt("Override address for this check."),
@@ -147,10 +249,19 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"notify_after":     floatOpt("Notify after N minutes of downtime."),
 			"reminder_interval": floatOpt("Reminder interval in hours."),
 			"message":          strOpt("Custom notification message."),
-			"monitoring": schema.BoolAttribute{
+			"active": schema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Enable or disable monitoring execution for this check. Defaults to `true`. Set to `false` to pause the check without deleting it.",
+				Default:             booldefault.StaticBool(true),
+				Description:         "Set to false to deactivate the check without deleting it. Defaults to true.",
+				MarkdownDescription: "Set to `false` to deactivate the check without deleting it. Defaults to `true`.",
+			},
+			"notification": schema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+				Description:         "Enable or disable alert notifications for this check. Defaults to true.",
+				MarkdownDescription: "Enable or disable alert notifications for this check. Defaults to `true`.",
 			},
 			// Notification flags
 			"email_critical": boolOpt("Send email on critical state."),
@@ -196,12 +307,12 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"pop_type":             strOpt("POP type for email checks."),
 			"pop_host":             strOpt("POP host for email checks."),
 			"pop_user":             strOpt("POP username for email checks."),
-			"pop_password":         schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "POP password for email checks."},
+			"pop_password":         schema.StringAttribute{Optional: true, Sensitive: true, Description: "POP password for email checks.", MarkdownDescription: "POP password for email checks."},
 			"delete_mode":          strOpt("Delete mode for email checks."),
 			"time_warning":         intOpt("Warning delivery time (s) for email checks."),
 			"time_critical":        intOpt("Critical delivery time (s) for email checks."),
 			"username":             strOpt("Username for database checks."),
-			"password":             schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Password for database checks."},
+			"password":             schema.StringAttribute{Optional: true, Sensitive: true, Description: "Password for database checks.", MarkdownDescription: "Password for database checks."},
 			"database":             strOpt("Database name."),
 			"sql_query":            strOpt("SQL query to execute."),
 			"mongo_connection":     strOpt("MongoDB connection string."),
@@ -211,7 +322,7 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"command":              strOpt("Command to run (local/intranet checks)."),
 			"cron":                 strOpt("Cron expression for cron checks."),
 			"timezone":             strOpt("Timezone for cron checks."),
-			"token":                strOpt("Token for system checks."),
+			"token":                schema.StringAttribute{Optional: true, Sensitive: true, Description: "Token for system checks.", MarkdownDescription: "Token for system checks."},
 			"transaction_id":       strOpt("Transaction ID for TransAct checks."),
 			"definition":           strOpt("Script definition (Selenium/Postman checks)."),
 			"language":             strOpt("Script language (Selenium checks)."),
@@ -257,13 +368,13 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	plan.ID = types.StringValue(data.ID.String())
 
-	// Apply monitoring state. Defaults to enabled (true) when not set.
-	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Monitoring); err != nil {
-		resp.Diagnostics.AddError("Error setting monitoring state", err.Error())
+	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Active); err != nil {
+		resp.Diagnostics.AddError("Error setting active state", err.Error())
 		return
 	}
-	if plan.Monitoring.IsNull() || plan.Monitoring.IsUnknown() {
-		plan.Monitoring = types.BoolValue(true)
+	if err := r.applyNotification(plan.ID.ValueString(), plan.Notification); err != nil {
+		resp.Diagnostics.AddError("Error setting notification state", err.Error())
+		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -332,12 +443,13 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	plan.ID = state.ID
 
-	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Monitoring); err != nil {
-		resp.Diagnostics.AddError("Error setting monitoring state", err.Error())
+	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Active); err != nil {
+		resp.Diagnostics.AddError("Error setting active state", err.Error())
 		return
 	}
-	if plan.Monitoring.IsNull() || plan.Monitoring.IsUnknown() {
-		plan.Monitoring = types.BoolValue(true)
+	if err := r.applyNotification(plan.ID.ValueString(), plan.Notification); err != nil {
+		resp.Diagnostics.AddError("Error setting notification state", err.Error())
+		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -365,14 +477,16 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 }
 
 func buildCheckCommand(command, id string, m CheckResourceModel) client.Request {
-	hostID, _ := strconv.ParseInt(m.HostID.ValueString(), 10, 64)
 	cmd := client.Request{
 		"command": command,
-		"host_id": hostID,
-		"type":    m.Type.ValueInt64(),
 	}
 	if id != "" {
 		cmd["id"] = id
+	} else {
+		// host_id and type are only required for service_add, not service_edit
+		hostID, _ := strconv.ParseInt(m.HostID.ValueString(), 10, 64)
+		cmd["host_id"] = hostID
+		cmd["type"] = checkTypeByName[m.Type.ValueString()]
 	}
 
 	setOptionalString(cmd, "shortname", m.Shortname)
@@ -517,9 +631,12 @@ func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
 		return cur // key absent in API response — preserve configured value
 	}
 
-	// "active" is always present in service_show; read it unconditionally.
+	// "active" and "notification_active" are always present in service_show.
 	if v, ok := raw["active"].(float64); ok {
-		state.Monitoring = types.BoolValue(v == 1)
+		state.Active = types.BoolValue(v == 1)
+	}
+	if v, ok := raw["notification_active"].(float64); ok {
+		state.Notification = types.BoolValue(v == 1)
 	}
 
 	state.Shortname = getString("shortname", state.Shortname)
@@ -607,6 +724,21 @@ func (r *CheckResource) applyMonitoring(id string, monitoring types.Bool) error 
 		"command":    "service_monitoring",
 		"id":         id,
 		"monitoring": val,
+	})
+	return err
+}
+
+// applyNotification calls service_notification to enable or disable alert notifications.
+// When notification is null/unknown (not configured), it defaults to enabled (1).
+func (r *CheckResource) applyNotification(id string, notification types.Bool) error {
+	val := 1
+	if !notification.IsNull() && !notification.IsUnknown() && !notification.ValueBool() {
+		val = 0
+	}
+	_, err := r.client.Do(client.Request{
+		"command":      "service_notification",
+		"id":           id,
+		"notification": val,
 	})
 	return err
 }

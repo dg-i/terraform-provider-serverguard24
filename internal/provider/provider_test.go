@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 func TestProvider_Configure_TokenFromConfig(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 var _ resource.Resource = &ContactResource{}
@@ -41,30 +41,43 @@ func (r *ContactResource) Metadata(_ context.Context, req resource.MetadataReque
 
 func (r *ContactResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Manages a Serverguard24 contact.",
 		MarkdownDescription: "Manages a Serverguard24 contact.",
+		Version:             0,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": schema.StringAttribute{
-				Required: true,
+				Required:            true,
+				Description:         "Display name for the contact.",
+				MarkdownDescription: "Display name for the contact.",
 			},
 			"language": schema.StringAttribute{
 				Required:            true,
+				Description:         "Notification language: en or de.",
 				MarkdownDescription: "Notification language: `en` or `de`.",
 			},
 			"email": schema.StringAttribute{
-				Optional: true,
+				Optional:            true,
+				Description:         "Email address for alert notifications.",
+				MarkdownDescription: "Email address for alert notifications.",
 			},
 			"mobile": schema.StringAttribute{
-				Optional: true,
+				Optional:            true,
+				Description:         "Mobile phone number for SMS alerts.",
+				MarkdownDescription: "Mobile phone number for SMS alerts.",
 			},
 			"network": schema.StringAttribute{
-				Optional: true,
+				Optional:            true,
+				Description:         "Network push address.",
+				MarkdownDescription: "Network push address.",
 			},
 			"standard": schema.BoolAttribute{
-				Optional: true,
+				Optional:            true,
+				Description:         "Whether this is the default contact.",
+				MarkdownDescription: "Whether this is the default contact.",
 			},
 		},
 	}

@@ -1,4 +1,4 @@
-module git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider
+module github.com/dg-i/terraform-provider-serverguard24
 
 go 1.21
 

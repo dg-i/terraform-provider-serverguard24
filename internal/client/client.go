@@ -16,19 +16,21 @@ const defaultAPIEndpoint = "https://www.serverguard24.de/de/api/json.html"
 type Client struct {
 	token      string
 	endpoint   string
+	userAgent  string
 	httpClient *http.Client
 }
 
 // New creates a new API client using the default Serverguard24 API endpoint.
-func New(token string) *Client {
-	return NewWithEndpoint(token, defaultAPIEndpoint)
+func New(token, version string) *Client {
+	return NewWithEndpoint(token, version, defaultAPIEndpoint)
 }
 
 // NewWithEndpoint creates a new API client with a custom endpoint (e.g. for testing).
-func NewWithEndpoint(token, endpoint string) *Client {
+func NewWithEndpoint(token, version, endpoint string) *Client {
 	return &Client{
 		token:      token,
 		endpoint:   endpoint,
+		userAgent:  "terraform-provider-serverguard24/" + version,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -76,7 +78,14 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	resp, err := c.httpClient.Post(c.endpoint, "application/json", bytes.NewReader(payload))
+	httpReq, err := http.NewRequest("POST", c.endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", c.userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request: %w", err)
 	}

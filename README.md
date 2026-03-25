@@ -11,8 +11,8 @@ This Terraform provider enables managing [Serverguard24](https://www.serverguard
 ## Building the Provider
 
 ```sh
-git clone https://git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider
-cd serverguard24-provider
+git clone https://github.com/dg-i/terraform-provider-serverguard24.git
+cd terraform-provider-serverguard24
 make build
 ```
 
@@ -71,9 +71,8 @@ resource "serverguard24_host" "webserver" {
 
 resource "serverguard24_check" "http" {
   host_id   = serverguard24_host.webserver.id
-  type      = 11
+  type      = "http"
   shortname = "HTTP Check"
-  address   = "https://example.com"
   path      = "/"
   timeout   = 10
   port      = 443
@@ -100,19 +99,19 @@ See the [`examples/`](examples/) directory for more complete examples.
 
 The `serverguard24_check` resource supports many check types via the `type` attribute:
 
-| Type ID | Name | Key Additional Fields |
-|---|---|---|
-| `11` | HTTP | `path`, `timeout`, `port` |
-| `13` | HTTP Perf | `path`, `timeout`, `port`, `warning_*`, `critical_*` |
-| `14` | SSL Cert | `protocol`, `port`, `validity_warning`, `validity_critical`, `timeout` |
-| `40` | PING | `response_warning`, `response_critial`, `timeout` |
-| `60` | SSH | `port`, `timeout` |
-| `80` | TCP | `port`, `timeout` |
-| `90` | DNS | `dns_name`, `timeout` |
-| `91` | Domain | `expected_ip1` |
-| `51` | SMTP | `port`, `timeout` |
-| `70` | MySQL | `port`, `username`, `password`, `timeout` |
-| `102` | Cron | `cron`, `timezone`, `timeout` |
+| Type Name | Key Additional Fields |
+|---|---|
+| `http` | `path`, `timeout`, `port` |
+| `http_perf` | `path`, `timeout`, `port`, `warning_*`, `critical_*` |
+| `ssl_cert` | `protocol`, `port`, `validity_warning`, `validity_critical`, `timeout` |
+| `ping` | `response_warning`, `response_critical`, `timeout` |
+| `ssh` | `port`, `timeout` |
+| `tcp` | `port`, `timeout` |
+| `dns` | `dns_name`, `timeout` |
+| `domain` | `expected_ip1` |
+| `smtp` | `port`, `timeout` |
+| `mysql` | `port`, `username`, `password`, `timeout` |
+| `cron` | `cron`, `timezone`, `timeout` |
 
 For a full list of check types and their parameters, see the [CLAUDE.md](CLAUDE.md) documentation.
 

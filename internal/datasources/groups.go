@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 var _ datasource.DataSource = &GroupsDataSource{}
@@ -37,6 +37,7 @@ func (d *GroupsDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 
 func (d *GroupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Retrieves all available Serverguard24 host groups.",
 		MarkdownDescription: "Retrieves all available Serverguard24 host groups.",
 		Attributes: map[string]schema.Attribute{
 			"groups": schema.ListNestedAttribute{

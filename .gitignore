@@ -1,0 +1,13 @@
+# Provider binary
+terraform-provider-serverguard24
+
+# Terraform state
+**/*.tfstate
+**/*.tfstate.backup
+
+# Terraform working directories
+**/.terraform/
+**/.terraform.lock.hcl
+
+# GoReleaser output
+dist/

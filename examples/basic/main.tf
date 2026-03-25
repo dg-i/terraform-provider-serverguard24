@@ -8,8 +8,7 @@ terraform {
 }
 
 provider "serverguard24" {
-  #api_token = "REDACTED"
-  api_token = "REDACTED"
+  # Set via SG24_API_TOKEN environment variable
 }
 
 # ---------------------------------------------------------------------------
@@ -62,9 +61,9 @@ resource "serverguard24_contact" "example" {
 
 resource "serverguard24_check" "http" {
   host_id    = serverguard24_host.example.id
-  type       = 11
+  type       = "http"
   shortname  = "[EXAMPLE] HTTP"
-  monitoring = false
+  active = false
   path       = "/"
   timeout    = 10
   port       = 443
@@ -72,9 +71,9 @@ resource "serverguard24_check" "http" {
 
 resource "serverguard24_check" "ssl" {
   host_id    = serverguard24_host.example.id
-  type       = 14
+  type       = "ssl_cert"
   shortname  = "[EXAMPLE] SSL Cert"
-  monitoring = false
+  active = false
   protocol   = "https"
   port       = 443
   timeout    = 10
@@ -85,9 +84,9 @@ resource "serverguard24_check" "ssl" {
 
 resource "serverguard24_check" "ping" {
   host_id    = serverguard24_host.example.id
-  type       = 40
+  type       = "ping"
   shortname  = "[EXAMPLE] PING"
-  monitoring = false
+  active = false
 
   response_warning  = 200
   response_critical = 500
@@ -118,10 +117,9 @@ resource "serverguard24_check_integration_link" "http_int" {
 
 resource "serverguard24_downtime" "example" {
   hostname    = serverguard24_host.example.name
-  starttime   = 1775001600 # 2026-04-01 00:00:00 UTC
-  endtime     = 1775008800 # 2026-04-01 02:00:00 UTC
+  start_time  = "2026-04-01T00:00:00Z"
+  end_time    = "2026-04-01T02:00:00Z"
   description = "[EXAMPLE] Terraform provider test – safe to remove"
-  type        = 1
 
   services = [tonumber(serverguard24_check.http.id)]
 }

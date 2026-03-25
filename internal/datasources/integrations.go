@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 var _ datasource.DataSource = &IntegrationsDataSource{}
@@ -37,6 +37,7 @@ func (d *IntegrationsDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *IntegrationsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Retrieves all available Serverguard24 integrations.",
 		MarkdownDescription: "Retrieves all available Serverguard24 integrations.",
 		Attributes: map[string]schema.Attribute{
 			"integrations": schema.ListNestedAttribute{

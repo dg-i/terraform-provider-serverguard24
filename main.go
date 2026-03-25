@@ -7,10 +7,12 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/provider"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/provider"
 )
 
 var version string = "dev"
+
+//go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name serverguard24
 
 func main() {
 	var debug bool

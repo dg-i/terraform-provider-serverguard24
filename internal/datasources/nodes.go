@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 var _ datasource.DataSource = &NodesDataSource{}
@@ -42,19 +42,22 @@ func (d *NodesDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 func (d *NodesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Retrieves all available Serverguard24 monitoring nodes (probe locations).",
 		MarkdownDescription: "Retrieves all available Serverguard24 monitoring nodes (probe locations).",
 		Attributes: map[string]schema.Attribute{
 			"nodes": schema.ListNestedAttribute{
-				Computed: true,
+				Computed:            true,
+				Description:         "List of monitoring nodes.",
+				MarkdownDescription: "List of monitoring nodes.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"ipv4":         schema.StringAttribute{Computed: true},
-						"ipv6":         schema.StringAttribute{Computed: true},
-						"location":     schema.StringAttribute{Computed: true},
-						"country":      schema.StringAttribute{Computed: true},
-						"country_code": schema.StringAttribute{Computed: true},
-						"region":       schema.StringAttribute{Computed: true},
-						"region_code":  schema.StringAttribute{Computed: true},
+						"ipv4":         schema.StringAttribute{Computed: true, Description: "IPv4 address of the node.", MarkdownDescription: "IPv4 address of the node."},
+						"ipv6":         schema.StringAttribute{Computed: true, Description: "IPv6 address of the node.", MarkdownDescription: "IPv6 address of the node."},
+						"location":     schema.StringAttribute{Computed: true, Description: "Location name of the node.", MarkdownDescription: "Location name of the node."},
+						"country":      schema.StringAttribute{Computed: true, Description: "Country where the node is located.", MarkdownDescription: "Country where the node is located."},
+						"country_code": schema.StringAttribute{Computed: true, Description: "ISO country code.", MarkdownDescription: "ISO country code."},
+						"region":       schema.StringAttribute{Computed: true, Description: "Region where the node is located.", MarkdownDescription: "Region where the node is located."},
+						"region_code":  schema.StringAttribute{Computed: true, Description: "Region code.", MarkdownDescription: "Region code."},
 					},
 				},
 			},

@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"git.dg-i.net/dg-i/engineering/terraform/serverguard24-provider/internal/client"
+	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
 )
 
 var _ resource.Resource = &HostResource{}
@@ -39,24 +39,30 @@ func (r *HostResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *HostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description:         "Manages a Serverguard24 host.",
 		MarkdownDescription: "Manages a Serverguard24 host.",
+		Version:             0,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
+				Description:         "Host ID.",
 				MarkdownDescription: "Host ID.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": schema.StringAttribute{
 				Required:            true,
+				Description:         "Hostname or display name.",
 				MarkdownDescription: "Hostname or display name.",
 			},
 			"address": schema.StringAttribute{
 				Required:            true,
+				Description:         "IP address or FQDN of the host.",
 				MarkdownDescription: "IP address or FQDN of the host.",
 			},
 			"groups": schema.ListAttribute{
 				Optional:            true,
 				ElementType:         types.Int64Type,
+				Description:         "List of group IDs to assign this host to.",
 				MarkdownDescription: "List of group IDs to assign this host to.",
 			},
 		},

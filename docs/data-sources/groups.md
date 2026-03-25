@@ -1,21 +1,34 @@
+---
+page_title: "serverguard24_groups Data Source - serverguard24"
+subcategory: ""
+description: |-
+  Retrieves all available Serverguard24 host groups.
+---
+
 # serverguard24_groups
 
-Retrieves all available Serverguard24 host groups.
+Retrieves all available Serverguard24 host groups. Use the returned IDs in the `groups` attribute of `serverguard24_host`.
 
-## Example usage
+## Example Usage
 
 ```hcl
 data "serverguard24_groups" "all" {}
 
-output "group_names" {
-  value = { for g in data.serverguard24_groups.all.groups : g.id => g.name }
+output "groups" {
+  value = data.serverguard24_groups.all.groups
+}
+
+resource "serverguard24_host" "web" {
+  name    = "web.example.com"
+  address = "203.0.113.10"
+  groups  = [tonumber(data.serverguard24_groups.all.groups[0].id)]
 }
 ```
 
 ## Schema
 
-| Name     | Type        | Description        |
-| -------- | ----------- | ------------------ |
-| `groups` | list(object)| List of groups.    |
-| `groups[].id`   | string | Group ID.   |
-| `groups[].name` | string | Group name. |
+### Read-Only
+
+- `groups` (List of Object) — List of all groups.
+  - `id` (String) — Group ID.
+  - `name` (String) — Group display name.

@@ -26,7 +26,7 @@ func TestClient_Do_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewWithEndpoint("test-token", server.URL)
+	c := NewWithEndpoint("test-token", "test", server.URL)
 	resp, err := c.Do(Request{"command": "get_hosts"})
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -62,7 +62,7 @@ func TestClient_Do_ErrorCodes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c := NewWithEndpoint("token", server.URL)
+			c := NewWithEndpoint("token", "test", server.URL)
 			_, err := c.Do(Request{"command": "test"})
 			if err == nil {
 				t.Fatal("Do() expected error")
@@ -85,7 +85,7 @@ func TestClient_Do_EmptyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewWithEndpoint("token", server.URL)
+	c := NewWithEndpoint("token", "test", server.URL)
 	_, err := c.Do(Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for empty response")
@@ -100,10 +100,65 @@ func TestClient_Do_InvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewWithEndpoint("token", server.URL)
+	c := NewWithEndpoint("token", "test", server.URL)
 	_, err := c.Do(Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for invalid JSON")
+	}
+}
+
+func TestClient_Do_UserAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua := r.Header.Get("User-Agent")
+		if ua != "terraform-provider-serverguard24/1.2.3" {
+			t.Errorf("User-Agent = %q, want %q", ua, "terraform-provider-serverguard24/1.2.3")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(apiResponse("100", "ok", map[string]string{"id": "1"}))
+	}))
+	defer server.Close()
+
+	c := NewWithEndpoint("token", "1.2.3", server.URL)
+	_, _ = c.Do(Request{"command": "test"})
+}
+
+func TestClient_Do_TokenInBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body.Token != "my-secret-token" {
+			t.Errorf("token = %q, want %q", body.Token, "my-secret-token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(apiResponse("100", "ok", map[string]string{}))
+	}))
+	defer server.Close()
+
+	c := NewWithEndpoint("my-secret-token", "test", server.URL)
+	_, _ = c.Do(Request{"command": "test"})
+}
+
+func TestClient_IsAlreadyExists(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(apiResponse("310", "Already exists", nil))
+	}))
+	defer server.Close()
+
+	c := NewWithEndpoint("token", "test", server.URL)
+	_, err := c.Do(Request{"command": "test"})
+	if err == nil {
+		t.Fatal("expected error for 310")
+	}
+	if !IsAlreadyExists(err) {
+		t.Errorf("IsAlreadyExists() = false, want true for: %v", err)
+	}
+	if IsNotFound(err) {
+		t.Error("IsNotFound() should be false for 310")
 	}
 }
 
@@ -113,7 +168,7 @@ func TestClient_Do_Non200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewWithEndpoint("token", server.URL)
+	c := NewWithEndpoint("token", "test", server.URL)
 	_, err := c.Do(Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for non-200 status")
