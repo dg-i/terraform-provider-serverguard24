@@ -95,6 +95,57 @@ resource "serverguard24_check_contact_link" "http_ops" {
 
 See the [`examples/`](examples/) directory for more complete examples.
 
+## Finding IDs for import
+
+`terraform import` / `tofu import` for `serverguard24_host` and `serverguard24_check` needs the numeric **host ID** or **check (service) ID**. If those IDs are not visible in the web UI, you can list them via the JSON API (same token as the provider: `api_token` or `SG24_API_TOKEN`).
+
+POST to `https://www.serverguard24.de/de/api/json.html` with `Content-Type: application/json`. The body must include `token` at the top level **and** duplicate `token` inside each `requests[]` object (see [`internal/client/client.go`](internal/client/client.go)).
+
+**All host IDs** — command `get_hosts` (no further parameters):
+
+```sh
+curl -sS -X POST 'https://www.serverguard24.de/de/api/json.html' \
+  -H 'Content-Type: application/json' \
+  -d "{\"token\":\"${SG24_API_TOKEN}\",\"requests\":[{\"command\":\"get_hosts\",\"token\":\"${SG24_API_TOKEN}\"}]}"
+```
+
+With [jq](https://jqlang.org/), print only host IDs:
+
+```sh
+curl -sS -X POST 'https://www.serverguard24.de/de/api/json.html' \
+  -H 'Content-Type: application/json' \
+  -d "{\"token\":\"${SG24_API_TOKEN}\",\"requests\":[{\"command\":\"get_hosts\",\"token\":\"${SG24_API_TOKEN}\"}]}" \
+  | jq -r '.[0].data[]? | .id | tostring'
+```
+
+**Check IDs** — there is no single “all checks” call in the documented API; use `host_get_services` with the **host** `id` for each host ([`api-docs/server.md`](api-docs/server.md)):
+
+```sh
+HOST_ID=12345  # replace with a host id from get_hosts
+
+curl -sS -X POST 'https://www.serverguard24.de/de/api/json.html' \
+  -H 'Content-Type: application/json' \
+  -d "{\"token\":\"${SG24_API_TOKEN}\",\"requests\":[{\"command\":\"host_get_services\",\"id\":${HOST_ID},\"token\":\"${SG24_API_TOKEN}\"}]}"
+```
+
+To collect check IDs for every host:
+
+```sh
+BASE='https://www.serverguard24.de/de/api/json.html'
+T="$SG24_API_TOKEN"
+
+for hid in $(curl -sS -X POST "$BASE" -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$T\",\"requests\":[{\"command\":\"get_hosts\",\"token\":\"$T\"}]}" \
+  | jq -r '.[0].data[]? | .id | tostring')
+do
+  curl -sS -X POST "$BASE" -H 'Content-Type: application/json' \
+    -d "{\"token\":\"$T\",\"requests\":[{\"command\":\"host_get_services\",\"id\":$hid,\"token\":\"$T\"}]}" \
+    | jq -r --arg host "$hid" '.[0].data[]? | "\(.id)\t(host \($host))"'
+done
+```
+
+Inspect the raw JSON if `data` uses different field names than `id` for a given response.
+
 ## Check Types
 
 The `serverguard24_check` resource supports many check types via the `type` attribute:
