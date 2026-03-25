@@ -172,10 +172,10 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		list, diags := types.ListValue(types.Int64Type, elems)
 		resp.Diagnostics.Append(diags...)
 		state.Groups = list
-	} else if !state.Groups.IsNull() {
-		// API returned empty groups; only update state if groups was already configured
-		// (non-null). If config omits groups, preserve null to avoid a perpetual diff.
-		state.Groups = types.ListValueMust(types.Int64Type, []attr.Value{})
+	} else {
+		// API returned empty groups – preserve null if config omits groups,
+		// but ensure the list type is always correct.
+		state.Groups = types.ListNull(types.Int64Type)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -230,7 +230,8 @@ func (r *HostResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 func (r *HostResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.Set(ctx, HostResourceModel{
-		ID: types.StringValue(req.ID),
+		ID:     types.StringValue(req.ID),
+		Groups: types.ListNull(types.Int64Type),
 	})...)
 }
 
