@@ -19,7 +19,9 @@ type IntegrationsDataSource struct {
 }
 
 type IntegrationsDataSourceModel struct {
-	Integrations []IntegrationModel `tfsdk:"integrations"`
+	Integrations []IntegrationModel          `tfsdk:"integrations"`
+	ByName       map[string]IntegrationModel `tfsdk:"by_name"`
+	ByID         map[string]IntegrationModel `tfsdk:"by_id"`
 }
 
 type IntegrationModel struct {
@@ -49,6 +51,28 @@ func (d *IntegrationsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 					},
 				},
 			},
+			"by_name": schema.MapNestedAttribute{
+				Computed:            true,
+				Description:         "Map of integration name to integration object for lookup by name.",
+				MarkdownDescription: "Map of integration name to integration object for lookup by name.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Computed: true},
+						"name": schema.StringAttribute{Computed: true},
+					},
+				},
+			},
+			"by_id": schema.MapNestedAttribute{
+				Computed:            true,
+				Description:         "Map of integration ID to integration object for lookup by ID.",
+				MarkdownDescription: "Map of integration ID to integration object for lookup by ID.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Computed: true},
+						"name": schema.StringAttribute{Computed: true},
+					},
+				},
+			},
 		},
 	}
 }
@@ -70,7 +94,7 @@ func (d *IntegrationsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 	if err != nil {
 		if client.IsPermissionError(err) {
 			resp.Diagnostics.AddWarning("Insufficient permissions for get_integrations", err.Error())
-			resp.Diagnostics.Append(resp.State.Set(ctx, &IntegrationsDataSourceModel{Integrations: []IntegrationModel{}})...)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &IntegrationsDataSourceModel{Integrations: []IntegrationModel{}, ByName: map[string]IntegrationModel{}, ByID: map[string]IntegrationModel{}})...)
 			return
 		}
 		resp.Diagnostics.AddError("Error reading integrations", err.Error())
@@ -83,14 +107,21 @@ func (d *IntegrationsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		return
 	}
 
-	var state IntegrationsDataSourceModel
+	state := IntegrationsDataSourceModel{
+		Integrations: []IntegrationModel{},
+		ByName:       make(map[string]IntegrationModel, len(raw)),
+		ByID:         make(map[string]IntegrationModel, len(raw)),
+	}
 	for _, item := range raw {
 		id := fmt.Sprintf("%v", item["id"])
 		name, _ := item["name"].(string)
-		state.Integrations = append(state.Integrations, IntegrationModel{
+		m := IntegrationModel{
 			ID:   types.StringValue(id),
 			Name: types.StringValue(name),
-		})
+		}
+		state.Integrations = append(state.Integrations, m)
+		state.ByName[name] = m
+		state.ByID[id] = m
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

@@ -41,8 +41,8 @@ func (r *ContactResource) Metadata(_ context.Context, req resource.MetadataReque
 
 func (r *ContactResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "Manages a Serverguard24 contact.",
-		MarkdownDescription: "Manages a Serverguard24 contact.",
+		Description:         "Manages a Serverguard24 contact. NOTE: The API only exposes a subset of the fields available in the Serverguard24 UI. The following settings must be configured manually in the UI and cannot be managed via Terraform: email format, SMS/phone notification time windows (Zeitraum), interval between phone calls (Abstand zwischen 2 Anrufen), and phone country code prefix.",
+		MarkdownDescription: "Manages a Serverguard24 contact.\n\n~> **API limitation:** The API only exposes a subset of the fields visible in the Serverguard24 UI. The following settings must be configured manually in the UI and cannot be managed via Terraform: email format, SMS/phone notification time windows (*Zeitraum*), interval between phone calls (*Abstand zwischen 2 Anrufen*), and phone country code prefix.",
 		Version:             0,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -183,7 +183,14 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 	state.Email = nullableString(c.Email)
 	state.Mobile = nullableString(c.Mobile)
 	state.Network = nullableString(c.Network)
-	state.Standard = types.BoolValue(c.Standard == 1)
+	// Only set standard to a non-null value when the API returns 1 (true), or when
+	// the config already had it set (non-null). This avoids a perpetual diff when
+	// the user does not configure standard and the API defaults to 0.
+	if c.Standard == 1 {
+		state.Standard = types.BoolValue(true)
+	} else if !state.Standard.IsNull() {
+		state.Standard = types.BoolValue(false)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

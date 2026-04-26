@@ -54,15 +54,8 @@ func (r *Response) codeString() string {
 }
 
 // Do sends a single command to the API and returns the response.
-// The API requires the token both in the outer body and inside each request.
+// The token is sent only in the outer body for authentication.
 func (c *Client) Do(cmd Request) (*Response, error) {
-	// Copy cmd to avoid mutating the caller's map
-	req := make(Request, len(cmd)+1)
-	for k, v := range cmd {
-		req[k] = v
-	}
-	req["token"] = c.token
-
 	// Use a struct (not a map) to guarantee token appears before requests in the
 	// serialized JSON. The API server appears to require this field ordering.
 	body := struct {
@@ -70,7 +63,7 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 		Requests []Request `json:"requests"`
 	}{
 		Token:    c.token,
-		Requests: []Request{req},
+		Requests: []Request{cmd},
 	}
 
 	payload, err := json.Marshal(body)

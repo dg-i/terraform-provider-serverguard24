@@ -105,15 +105,15 @@ func (r *DowntimeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"services": schema.ListAttribute{
 				Optional:            true,
-				ElementType:         types.Int64Type,
-				Description:         "List of check IDs to suppress alerts for during this maintenance window.",
-				MarkdownDescription: "List of check IDs to suppress alerts for during this maintenance window.",
+				ElementType:         types.StringType,
+				Description:         "List of check IDs (as strings) to suppress alerts for during this maintenance window.",
+				MarkdownDescription: "List of check IDs to suppress alerts for during this maintenance window. Accepts string IDs so you can reference `serverguard24_check.example.id` directly.",
 			},
 			"hosts": schema.ListAttribute{
 				Optional:            true,
-				ElementType:         types.Int64Type,
-				Description:         "List of host IDs to suppress alerts for during this maintenance window.",
-				MarkdownDescription: "List of host IDs to suppress alerts for during this maintenance window.",
+				ElementType:         types.StringType,
+				Description:         "List of host IDs (as strings) to suppress alerts for during this maintenance window.",
+				MarkdownDescription: "List of host IDs to suppress alerts for during this maintenance window. Accepts string IDs so you can reference `serverguard24_host.example.id` directly.",
 			},
 		},
 	}
@@ -198,22 +198,22 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// Link services and hosts in a single call each (API accepts arrays).
-	if !plan.Services.IsNull() && !plan.Services.IsUnknown() && len(listToInts(ctx, plan.Services)) > 0 {
+	if !plan.Services.IsNull() && !plan.Services.IsUnknown() && len(stringListToInt64s(ctx, plan.Services)) > 0 {
 		if _, err := r.client.Do(client.Request{
 			"command":  "downtime_link",
 			"id":       plan.ID.ValueString(),
-			"services": listToInts(ctx, plan.Services),
+			"services": stringListToInt64s(ctx, plan.Services),
 		}); err != nil {
 			resp.Diagnostics.AddError("Error linking services to downtime", err.Error())
 			return
 		}
 	}
 
-	if !plan.Hosts.IsNull() && !plan.Hosts.IsUnknown() && len(listToInts(ctx, plan.Hosts)) > 0 {
+	if !plan.Hosts.IsNull() && !plan.Hosts.IsUnknown() && len(stringListToInt64s(ctx, plan.Hosts)) > 0 {
 		if _, err := r.client.Do(client.Request{
 			"command": "downtime_link",
 			"id":      plan.ID.ValueString(),
-			"hosts":   listToInts(ctx, plan.Hosts),
+			"hosts":   stringListToInt64s(ctx, plan.Hosts),
 		}); err != nil {
 			resp.Diagnostics.AddError("Error linking hosts to downtime", err.Error())
 			return
@@ -250,11 +250,11 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 
 	// Attempt to unlink services/hosts. The downtime record itself cannot be
 	// deleted via the API; Terraform removes it from state after this returns.
-	if !state.Services.IsNull() && len(listToInts(ctx, state.Services)) > 0 {
+	if !state.Services.IsNull() && len(stringListToInt64s(ctx, state.Services)) > 0 {
 		if _, err := r.client.Do(client.Request{
 			"command":  "downtime_unlink",
 			"id":       state.ID.ValueString(),
-			"services": listToInts(ctx, state.Services),
+			"services": stringListToInt64s(ctx, state.Services),
 		}); err != nil {
 			resp.Diagnostics.AddWarning(
 				"Failed to unlink services from downtime",
@@ -262,11 +262,11 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 			)
 		}
 	}
-	if !state.Hosts.IsNull() && len(listToInts(ctx, state.Hosts)) > 0 {
+	if !state.Hosts.IsNull() && len(stringListToInt64s(ctx, state.Hosts)) > 0 {
 		if _, err := r.client.Do(client.Request{
 			"command": "downtime_unlink",
 			"id":      state.ID.ValueString(),
-			"hosts":   listToInts(ctx, state.Hosts),
+			"hosts":   stringListToInt64s(ctx, state.Hosts),
 		}); err != nil {
 			resp.Diagnostics.AddWarning(
 				"Failed to unlink hosts from downtime",
@@ -293,9 +293,24 @@ func (r *DowntimeResource) ImportState(ctx context.Context, req resource.ImportS
 	})...)
 }
 
-// emptyList returns an empty typed list for Int64.
+// emptyList returns an empty typed list for String (used by services/hosts).
 func emptyList() types.List {
-	return types.ListValueMust(types.Int64Type, []attr.Value{})
+	return types.ListValueMust(types.StringType, []attr.Value{})
+}
+
+// stringListToInt64s converts a types.List of strings to []int64 for API calls.
+// Non-numeric entries are silently skipped.
+func stringListToInt64s(ctx context.Context, l types.List) []int64 {
+	var elems []types.String
+	l.ElementsAs(ctx, &elems, false)
+	out := make([]int64, 0, len(elems))
+	for _, e := range elems {
+		var v int64
+		if _, err := fmt.Sscanf(e.ValueString(), "%d", &v); err == nil {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // parseRFC3339Unix parses an RFC 3339 timestamp string and returns its Unix epoch value.

@@ -19,7 +19,9 @@ type DistributorsDataSource struct {
 }
 
 type DistributorsDataSourceModel struct {
-	Distributors []DistributorModel `tfsdk:"distributors"`
+	Distributors []DistributorModel          `tfsdk:"distributors"`
+	ByName       map[string]DistributorModel `tfsdk:"by_name"`
+	ByID         map[string]DistributorModel `tfsdk:"by_id"`
 }
 
 type DistributorModel struct {
@@ -49,6 +51,28 @@ func (d *DistributorsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 					},
 				},
 			},
+			"by_name": schema.MapNestedAttribute{
+				Computed:            true,
+				Description:         "Map of distributor name to distributor object for lookup by name.",
+				MarkdownDescription: "Map of distributor name to distributor object for lookup by name.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Computed: true},
+						"name": schema.StringAttribute{Computed: true},
+					},
+				},
+			},
+			"by_id": schema.MapNestedAttribute{
+				Computed:            true,
+				Description:         "Map of distributor ID to distributor object for lookup by ID.",
+				MarkdownDescription: "Map of distributor ID to distributor object for lookup by ID.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Computed: true},
+						"name": schema.StringAttribute{Computed: true},
+					},
+				},
+			},
 		},
 	}
 }
@@ -70,7 +94,7 @@ func (d *DistributorsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 	if err != nil {
 		if client.IsPermissionError(err) {
 			resp.Diagnostics.AddWarning("Insufficient permissions for get_distributors", err.Error())
-			resp.Diagnostics.Append(resp.State.Set(ctx, &DistributorsDataSourceModel{Distributors: []DistributorModel{}})...)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &DistributorsDataSourceModel{Distributors: []DistributorModel{}, ByName: map[string]DistributorModel{}, ByID: map[string]DistributorModel{}})...)
 			return
 		}
 		resp.Diagnostics.AddError("Error reading distributors", err.Error())
@@ -83,14 +107,21 @@ func (d *DistributorsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		return
 	}
 
-	var state DistributorsDataSourceModel
+	state := DistributorsDataSourceModel{
+		Distributors: []DistributorModel{},
+		ByName:       make(map[string]DistributorModel, len(raw)),
+		ByID:         make(map[string]DistributorModel, len(raw)),
+	}
 	for _, item := range raw {
 		id := fmt.Sprintf("%v", item["id"])
 		name, _ := item["name"].(string)
-		state.Distributors = append(state.Distributors, DistributorModel{
+		m := DistributorModel{
 			ID:   types.StringValue(id),
 			Name: types.StringValue(name),
-		})
+		}
+		state.Distributors = append(state.Distributors, m)
+		state.ByName[name] = m
+		state.ByID[id] = m
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

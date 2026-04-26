@@ -62,8 +62,8 @@ func (r *HostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"groups": schema.ListAttribute{
 				Optional:            true,
 				ElementType:         types.Int64Type,
-				Description:         "List of group IDs to assign this host to.",
-				MarkdownDescription: "List of group IDs to assign this host to.",
+				Description:         "List of group IDs to assign this host to. NOTE: The groups feature appears to have no UI and no API commands to create groups. Status is unknown — this attribute is accepted by the API but group IDs cannot be obtained in practice.",
+				MarkdownDescription: "List of group IDs to assign this host to.\n\n~> **Status unknown:** The groups feature appears to have no UI and no API commands to create or manage groups. This attribute is accepted by the API but group IDs cannot be obtained in practice.",
 			},
 		},
 	}

@@ -47,6 +47,69 @@ func TestValidCheckTypes_Sorted(t *testing.T) {
 	}
 }
 
+func TestAllowedParamsByType_AllTypesCovered(t *testing.T) {
+	for name := range checkTypeByName {
+		if _, ok := allowedParamsByType[name]; !ok {
+			t.Errorf("allowedParamsByType missing entry for check type %q", name)
+		}
+	}
+}
+
+func TestAllowedParamsByType_NoUnknownTypes(t *testing.T) {
+	for name := range allowedParamsByType {
+		if _, ok := checkTypeByName[name]; !ok {
+			t.Errorf("allowedParamsByType has entry for unknown check type %q", name)
+		}
+	}
+}
+
+func TestRegionByName_AllMapped(t *testing.T) {
+	if len(regionByName) == 0 {
+		t.Fatal("regionByName is empty")
+	}
+	for name, id := range regionByName {
+		if id < 0 {
+			t.Errorf("regionByName[%q] = %d, want non-negative integer", name, id)
+		}
+	}
+	// "individual" (id=0) is the API default; it is intentionally not sent to the API.
+	if id, ok := regionByName["individual"]; !ok || id != 0 {
+		t.Errorf("regionByName[\"individual\"] should be 0, got %d", regionByName["individual"])
+	}
+}
+
+func TestRegionByID_Roundtrip(t *testing.T) {
+	for name, id := range regionByName {
+		got, ok := regionByID[id]
+		if !ok {
+			t.Errorf("regionByID[%d] not found (expected %q)", id, name)
+			continue
+		}
+		if got != name {
+			t.Errorf("regionByID[%d] = %q, want %q", id, got, name)
+		}
+	}
+}
+
+func TestRegionByID_SameSize(t *testing.T) {
+	if len(regionByName) != len(regionByID) {
+		t.Errorf("len(regionByName) = %d, len(regionByID) = %d, want equal (duplicate IDs?)",
+			len(regionByName), len(regionByID))
+	}
+}
+
+func TestValidRegions_Sorted(t *testing.T) {
+	names := validRegions()
+	if len(names) == 0 {
+		t.Fatal("validRegions() returned empty slice")
+	}
+	for i := 1; i < len(names); i++ {
+		if names[i] < names[i-1] {
+			t.Errorf("validRegions() not sorted: %q comes after %q", names[i], names[i-1])
+		}
+	}
+}
+
 func TestParseRFC3339Unix(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -114,7 +114,7 @@ Komplexeste Resource. Der Check-Typ wird über das Attribut `type` als **String-
 - `shortname` (optional, max 40 Zeichen)
 - `description` (optional)
 - `address` (optional)
-- `region` (optional: `1`=Europa, `2`=Amerika, `3`=Europa/Amerika, `4`=Asien/Pazifik, `5`=World)
+- `region` (optional: `europe`, `americas`, `europe_americas`, `asia_pacific`, `world`; numeric IDs 1–5 also accepted)
 - `ipv6` (optional, bool)
 - `interval` (optional, float, Minuten)
 - `notify_after` (optional, float, Minuten)
@@ -247,6 +247,11 @@ make tidy       # go mod tidy
 **Lokale Entwicklung:** `make dev` schreibt eine `~/.terraformrc` mit `dev_overrides`, sodass
 `terraform plan`/`tofu plan` direkt ohne `init` mit dem lokalen Build funktioniert.
 
+**Nach jeder Interface-Änderung** (neue/umbenannte Attribute, neue Resources/Data Sources, geänderte Typen):
+1. `make generate` – regeneriert `docs/` aus Schema-Beschreibungen (tfplugindocs)
+2. `make dev` – installiert den neuen Build lokal
+3. README.md prüfen – enthält manuelle Beispiele, die nicht automatisch aktualisiert werden
+
 ---
 
 ## CI/CD
@@ -335,6 +340,7 @@ resource "serverguard24_downtime" "maintenance" {
 
 ## Offene Punkte / TODOs
 
-- [ ] Acceptance Tests gegen die echte API (mit Test-Account)
+- [x] Acceptance Tests gegen die echte API (mit Test-Account) — `internal/acceptance/`, läuft via `make testacc` und in GitHub Actions (job `testacc`, benötigt Secret `SG24_API_TOKEN`)
 - [ ] Bei Serverguard24 nachfragen: `downtime_delete`, `distributor_add/edit/delete`
-- [ ] Veröffentlichung auf registry.terraform.io
+- [ ] **Groups-Feature: Status unklar** — `get_groups` liefert immer eine leere Liste, kein UI-Zugang, keine API-Commands zum Anlegen/Bearbeiten von Gruppen; `groups`-Attribut am Host und `serverguard24_groups` Data Source als "Status unbekannt" markiert
+- [ ] Veröffentlichung auf registry.terraform.io — GPG-Signing ist vorbereitet (`.goreleaser.yml`); benötigt noch: GPG-Schlüsselpaar generieren, `GPG_PRIVATE_KEY` + `PASSPHRASE` als GitHub-Secrets setzen, Public Key bei registry.terraform.io registrieren

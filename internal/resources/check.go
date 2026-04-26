@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -60,6 +62,295 @@ var checkTypeByID = func() map[int64]string {
 	return m
 }()
 
+// regionByName maps human-readable region names (as used in Terraform config) to the
+// API integer IDs. Both named strings and raw numeric strings are accepted on input;
+// the canonical name form is always written back to state on read.
+var regionByName = map[string]int64{
+	"individual":      0,
+	"europe":          1,
+	"americas":        2,
+	"europe_americas": 3,
+	"asia_pacific":    4,
+	"world":           5,
+}
+
+// regionByID is the reverse of regionByName, built at init time.
+var regionByID = func() map[int64]string {
+	m := make(map[int64]string, len(regionByName))
+	for name, id := range regionByName {
+		m[id] = name
+	}
+	return m
+}()
+
+// validRegions returns the sorted list of valid region name strings.
+func validRegions() []string {
+	names := make([]string, 0, len(regionByName))
+	for name := range regionByName {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// sslVersion maps — the integer encoding of ssl_version differs per check type.
+//
+//   http / http_perf : 1=auto  2=tlsv1  3=sslv3
+//   ssl_cert         : 0=auto  1=tlsv1  2=sslv3
+//   smtp             : 0=none  1=tls    2=ssl
+var (
+	sslVersionHTTPByName    = map[string]int64{"auto": 1, "tlsv1": 2, "sslv3": 3}
+	sslVersionHTTPByID      = map[int64]string{1: "auto", 2: "tlsv1", 3: "sslv3"}
+	sslVersionSSLCertByName = map[string]int64{"auto": 0, "tlsv1": 1, "sslv3": 2}
+	sslVersionSSLCertByID   = map[int64]string{0: "auto", 1: "tlsv1", 2: "sslv3"}
+	sslVersionSMTPByName    = map[string]int64{"none": 0, "tls": 1, "ssl": 2}
+	sslVersionSMTPByID      = map[int64]string{0: "none", 1: "tls", 2: "ssl"}
+)
+
+// sslVersionMaps returns the name→ID and ID→name conversion maps for a check type.
+func sslVersionMaps(checkType string) (map[string]int64, map[int64]string) {
+	switch checkType {
+	case "ssl_cert":
+		return sslVersionSSLCertByName, sslVersionSSLCertByID
+	case "smtp":
+		return sslVersionSMTPByName, sslVersionSMTPByID
+	default: // http, http_perf
+		return sslVersionHTTPByName, sslVersionHTTPByID
+	}
+}
+
+// validSSLVersions returns the sorted valid ssl_version string values for a check type.
+func validSSLVersions(checkType string) []string {
+	nameToID, _ := sslVersionMaps(checkType)
+	names := make([]string, 0, len(nameToID))
+	for name := range nameToID {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// auth_type maps — http, http_perf: "none"/"basic"/"ntlm" ↔ API codes "0"/"b"/"n"
+var authTypeByName = map[string]string{"none": "0", "basic": "b", "ntlm": "n"}
+var authTypeByCode = map[string]string{"0": "none", "b": "basic", "n": "ntlm"}
+
+// performance_none maps — http_perf, site_perf, local_web, cron: "unknown"/"critical" ↔ 0/1
+var performanceNoneByName = map[string]int64{"unknown": 0, "critical": 1}
+var performanceNoneByID   = map[int64]string{0: "unknown", 1: "critical"}
+
+// pop_type maps — email: "pop3"/"imap"/"pop3s"/"imaps" ↔ API int codes 110/143/995/993
+var popTypeByName = map[string]int64{"pop3": 110, "imap": 143, "pop3s": 995, "imaps": 993}
+var popTypeByID   = map[int64]string{110: "pop3", 143: "imap", 995: "pop3s", 993: "imaps"}
+
+// delete_mode maps — email: "ok_only"/"all" ↔ API int codes 2/3
+var deleteModeByName = map[string]int64{"ok_only": 2, "all": 3}
+var deleteModeByID   = map[int64]string{2: "ok_only", 3: "all"}
+
+// mongoConnectionByName — mongodb: "mongodb"/"mongodb_srv" ↔ API int codes 0/1
+var mongoConnectionByName = map[string]int64{"mongodb": 0, "mongodb_srv": 1}
+var mongoConnectionByID   = map[int64]string{0: "mongodb", 1: "mongodb_srv"}
+
+// searchitem_none maps — local_web, system: "warning"/"critical"/"unknown" ↔ 1/2/3
+var searchItemNoneByName = map[string]int64{"warning": 1, "critical": 2, "unknown": 3}
+var searchItemNoneByID   = map[int64]string{1: "warning", 2: "critical", 3: "unknown"}
+
+// portscan_none maps — port_scan: "critical"/"unknown" ↔ 2/3
+var portscanNoneByName = map[string]int64{"critical": 2, "unknown": 3}
+var portscanNoneByID   = map[int64]string{2: "critical", 3: "unknown"}
+
+// sortedStringKeys returns the sorted keys of a map[string]T for use in error messages.
+func sortedStringKeys[T any](m map[string]T) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// checkTypeByDisplayName maps the display name returned by service_show ("name" field)
+// to the internal type name used in Terraform config. Keys are lowercased for matching.
+var checkTypeByDisplayName = map[string]string{
+	"http":             "http",
+	"http perf":        "http_perf",
+	"site perf":        "site_perf",
+	"ssl cert":         "ssl_cert",
+	"domain":           "domain",
+	"ping":             "ping",
+	"ssh":              "ssh",
+	"ftp":              "ftp",
+	"tcp":              "tcp",
+	"dns":              "dns",
+	"smtp":             "smtp",
+	"pop3":             "pop3",
+	"imap":             "imap",
+	"email":            "email",
+	"blacklist":        "blacklist",
+	"mysql":            "mysql",
+	"postgresql":       "postgresql",
+	"ms sql":           "mssql",
+	"mongodb":          "mongodb",
+	"local web":        "local_web",
+	"local":            "local",
+	"intranet":         "intranet",
+	"cron":             "cron",
+	"system":           "system",
+	"transact server":  "transact_server",
+	"transact browser": "transact_browser",
+	"selenium":         "selenium",
+	"postman":          "postman",
+	"port scan":        "port_scan",
+}
+
+// requiredParamsByType maps each check type to the set of param attribute names
+// that must be set for the API call to succeed. These are checked in ValidateConfig
+// so the user gets a plan-time error instead of an opaque API 210 error at apply time.
+var requiredParamsByType = map[string][]string{
+	"http":             {"path", "timeout", "port"},
+	"http_perf":        {"path", "warning_throughput", "warning_connect", "warning_roundtrip", "critical_throughput", "critical_connect", "critical_roundtrip", "timeout", "port"},
+	"site_perf":        {"path", "warning_throughput", "warning_roundtrip", "critical_throughput", "critical_roundtrip", "timeout", "port"},
+	"ssl_cert":         {"protocol", "port", "validity_warning", "validity_critical", "timeout"},
+	"domain":           {"expected_ip1"},
+	"ping":             {"response_warning", "response_critical", "timeout"},
+	"ssh":              {"port", "timeout"},
+	"ftp":              {"port", "timeout"},
+	"tcp":              {"port", "timeout"},
+	"dns":              {"dns_name", "timeout"},
+	"smtp":             {"port", "timeout"},
+	"pop3":             {"port", "timeout"},
+	"imap":             {"port", "timeout"},
+	"email":            {"smtp_port", "sender", "recipient", "pop_type", "pop_host", "pop_user", "pop_password", "delete_mode", "time_warning", "time_critical", "timeout"},
+	"blacklist":        {},
+	"mysql":            {"port", "username", "password", "timeout"},
+	"postgresql":       {"port", "username", "password", "database", "timeout"},
+	"mssql":            {"username", "password", "sql_query", "timeout", "port"},
+	"mongodb":          {"mongo_connection", "port", "database", "username", "password", "timeout"},
+	"local_web":        {"path", "searchitem_ok", "searchitem_critical", "timeout", "port", "searchitem_none"},
+	"local":            {"port", "command", "timeout"},
+	"intranet":         {"command"},
+	"cron":             {"cron", "timezone", "timeout"},
+	"system":           {"path", "port", "timeout", "searchitem_none"},
+	"transact_server":  {"transaction_id"},
+	"transact_browser": {"transaction_id"},
+	"selenium":         {"definition", "language", "timeout"},
+	"postman":          {"definition", "timeout"},
+	"port_scan":        {"port_range", "portscan_none"},
+}
+
+// allowedParamsByType maps each check type to the set of param attribute names
+// that are valid for that type, derived from api-docs/check-params.md.
+var allowedParamsByType = map[string][]string{
+	"http":             {"path", "timeout", "port", "searchitem", "method", "postvars", "regex", "invert_regex", "header_regex", "min_size", "max_size", "auth_type", "login", "password", "useragent", "addheader1", "addheader2", "addheader3", "content_type", "status_code", "redirect", "ssl_version", "check_cert"},
+	"http_perf":        {"path", "timeout", "port", "warning_throughput", "warning_connect", "warning_roundtrip", "critical_throughput", "critical_connect", "critical_roundtrip", "useragent", "performance_none", "ssl_version", "host_header", "auth_type", "login", "password"},
+	"site_perf":        {"path", "timeout", "port", "warning_throughput", "warning_roundtrip", "critical_throughput", "critical_roundtrip", "ssl", "useragent", "performance_none"},
+	"ssl_cert":         {"protocol", "port", "validity_warning", "validity_critical", "timeout", "ssl_version", "check_cert", "different_ip", "addheader1"},
+	"domain":           {"expected_ip1", "expected_ip2", "expected_ip3", "expected_ip4", "expected_iplink", "dns_server", "dns_record", "dns_auth", "timeout"},
+	"ping":             {"response_warning", "response_critical", "timeout"},
+	"ssh":              {"port", "timeout"},
+	"ftp":              {"port", "timeout", "ssl"},
+	"tcp":              {"port", "timeout"},
+	"dns":              {"dns_name", "timeout"},
+	"smtp":             {"port", "timeout", "from", "ssl_version"},
+	"pop3":             {"port", "timeout", "ssl"},
+	"imap":             {"port", "timeout", "ssl"},
+	"email":            {"smtp_port", "sender", "recipient", "pop_type", "pop_host", "pop_user", "pop_password", "delete_mode", "time_warning", "time_critical", "timeout", "smtp_user", "smtp_password", "smtp_tls", "smtp_header1"},
+	"blacklist":        {},
+	"mysql":            {"port", "username", "password", "timeout"},
+	"postgresql":       {"port", "username", "password", "database", "timeout"},
+	"mssql":            {"port", "username", "password", "sql_query", "timeout"},
+	"mongodb":          {"mongo_connection", "port", "database", "username", "password", "timeout"},
+	"local_web":        {"path", "searchitem_ok", "searchitem_warning", "searchitem_critical", "searchitem_none", "timeout", "port", "ssl", "basicauth_login", "basicauth_password", "debug_addon", "performance", "performance_name", "performance_unit", "performance_digits", "host_header"},
+	"local":            {"port", "command", "timeout", "ssl"},
+	"intranet":         {"command", "token", "silent", "performance", "performance_name", "performance_regex", "performance_unit", "performance_digits"},
+	"cron":             {"cron", "timezone", "timeout", "searchitem_ok", "searchitem_warning", "searchitem_critical", "performance", "performance_name", "performance_unit", "performance_digits"},
+	"system":           {"path", "token", "port", "timeout", "searchitem_none", "ssl", "host_header", "def"},
+	"transact_server":  {"transaction_id"},
+	"transact_browser": {"transaction_id"},
+	"selenium":         {"definition", "language", "timeout", "suite_filter"},
+	"postman":          {"definition", "timeout"},
+	"port_scan":        {"port_range", "portscan_none", "open_ports"},
+}
+
+// useStateForUnknown plan modifiers that also handle null state (unlike the
+// built-in UseStateForUnknown which skips null state). This is needed so that
+// Optional+Computed fields resolve to null (not "known after apply") after import
+// when the API doesn't return a value for the field.
+
+type useStateStringModifier struct{}
+
+func (m useStateStringModifier) Description(_ context.Context) string {
+	return "Use state value for unknown, including null."
+}
+func (m useStateStringModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (m useStateStringModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if !resp.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}
+
+type useStateBoolModifier struct{}
+
+func (m useStateBoolModifier) Description(_ context.Context) string {
+	return "Use state value for unknown, including null."
+}
+func (m useStateBoolModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (m useStateBoolModifier) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	if !resp.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}
+
+type useStateInt64Modifier struct{}
+
+func (m useStateInt64Modifier) Description(_ context.Context) string {
+	return "Use state value for unknown, including null."
+}
+func (m useStateInt64Modifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (m useStateInt64Modifier) PlanModifyInt64(_ context.Context, req planmodifier.Int64Request, resp *planmodifier.Int64Response) {
+	if !resp.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}
+
+type useStateFloat64Modifier struct{}
+
+func (m useStateFloat64Modifier) Description(_ context.Context) string {
+	return "Use state value for unknown, including null."
+}
+func (m useStateFloat64Modifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (m useStateFloat64Modifier) PlanModifyFloat64(_ context.Context, req planmodifier.Float64Request, resp *planmodifier.Float64Response) {
+	if !resp.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}
+
+type useStateObjectModifier struct{}
+
+func (m useStateObjectModifier) Description(_ context.Context) string {
+	return "Use state value for unknown, including null."
+}
+func (m useStateObjectModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+func (m useStateObjectModifier) PlanModifyObject(_ context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
+	if !resp.PlanValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}
+
 // validCheckTypes returns a sorted slice of all valid type names for use in
 // error messages and validators.
 func validCheckTypes() []string {
@@ -80,6 +371,42 @@ func joinStrings(ss []string, sep string) string {
 		result += s
 	}
 	return result
+}
+
+// regionValidator validates that the region attribute is a known region name or
+// a numeric string "1"–"5" (accepted for backwards compatibility).
+type regionValidator struct{}
+
+func (v regionValidator) Description(_ context.Context) string {
+	return "must be a valid region name or numeric region ID"
+}
+
+func (v regionValidator) MarkdownDescription(_ context.Context) string {
+	return "must be one of: `" + joinStrings(validRegions(), "`, `") + "` (or legacy numeric IDs 1–5)"
+}
+
+func (v regionValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	val := req.ConfigValue.ValueString()
+	if _, ok := regionByName[val]; ok {
+		return
+	}
+	// Accept numeric string IDs for backwards compatibility.
+	if id, err := strconv.ParseInt(val, 10, 64); err == nil {
+		if _, ok := regionByID[id]; ok {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid region",
+		fmt.Sprintf("%q is not a valid region. Valid names: %s (or numeric IDs 0–5)",
+			val,
+			joinStrings(validRegions(), ", "),
+		),
+	)
 }
 
 // checkTypeValidator validates that the type attribute is a known check type name.
@@ -111,28 +438,141 @@ func (v checkTypeValidator) ValidateString(_ context.Context, req validator.Stri
 
 var _ resource.Resource = &CheckResource{}
 var _ resource.ResourceWithImportState = &CheckResource{}
+var _ resource.ResourceWithValidateConfig = &CheckResource{}
 
 type CheckResource struct {
 	client *client.Client
 }
 
-// CheckResourceModel holds all possible attributes for all check types.
-// Type-specific fields are set only when relevant.
+// CheckParamsModel holds type-specific check parameters.
+type CheckParamsModel struct {
+	// Common check params
+	Path               types.String  `tfsdk:"path"`
+	Timeout            types.Int64   `tfsdk:"timeout"`
+	Port               types.Int64   `tfsdk:"port"`
+	Ssl                types.Bool    `tfsdk:"ssl"`
+	SslVersion         types.String  `tfsdk:"ssl_version"`
+	CheckCert          types.Bool    `tfsdk:"check_cert"`
+	AuthType           types.String  `tfsdk:"auth_type"`
+	Login              types.String  `tfsdk:"login"`
+	Password           types.String  `tfsdk:"password"`
+	Username           types.String  `tfsdk:"username"`
+	Useragent          types.String  `tfsdk:"useragent"`
+	HostHeader         types.String  `tfsdk:"host_header"`
+	// HTTP params
+	Searchitem         types.String  `tfsdk:"searchitem"`
+	Method             types.String  `tfsdk:"method"`
+	Postvars           types.String  `tfsdk:"postvars"`
+	Regex              types.String  `tfsdk:"regex"`
+	InvertRegex        types.Bool    `tfsdk:"invert_regex"`
+	HeaderRegex        types.String  `tfsdk:"header_regex"`
+	MinSize            types.Int64   `tfsdk:"min_size"`
+	MaxSize            types.Int64   `tfsdk:"max_size"`
+	Addheader1         types.String  `tfsdk:"addheader1"`
+	Addheader2         types.String  `tfsdk:"addheader2"`
+	Addheader3         types.String  `tfsdk:"addheader3"`
+	ContentType        types.String  `tfsdk:"content_type"`
+	StatusCode         types.Int64   `tfsdk:"status_code"`
+	Redirect           types.Bool    `tfsdk:"redirect"`
+	// Perf params
+	WarningThroughput  types.Float64 `tfsdk:"warning_throughput"`
+	WarningConnect     types.Float64 `tfsdk:"warning_connect"`
+	WarningRoundtrip   types.Float64 `tfsdk:"warning_roundtrip"`
+	CriticalThroughput types.Float64 `tfsdk:"critical_throughput"`
+	CriticalConnect    types.Float64 `tfsdk:"critical_connect"`
+	CriticalRoundtrip  types.Float64 `tfsdk:"critical_roundtrip"`
+	PerformanceNone    types.String  `tfsdk:"performance_none"`
+	// SSL Cert params
+	Protocol           types.String  `tfsdk:"protocol"`
+	ValidityWarning    types.Int64   `tfsdk:"validity_warning"`
+	ValidityCritical   types.Int64   `tfsdk:"validity_critical"`
+	DifferentIP        types.String  `tfsdk:"different_ip"`
+	// Domain params
+	ExpectedIP1        types.String  `tfsdk:"expected_ip1"`
+	ExpectedIP2        types.String  `tfsdk:"expected_ip2"`
+	ExpectedIP3        types.String  `tfsdk:"expected_ip3"`
+	ExpectedIP4        types.String  `tfsdk:"expected_ip4"`
+	ExpectedIPLink     types.String  `tfsdk:"expected_iplink"`
+	DnsServer          types.String  `tfsdk:"dns_server"`
+	DnsRecord          types.String  `tfsdk:"dns_record"`
+	DnsAuth            types.String  `tfsdk:"dns_auth"`
+	// PING params
+	ResponseWarning    types.Int64   `tfsdk:"response_warning"`
+	ResponseCritical   types.Int64   `tfsdk:"response_critical"`
+	// DNS params
+	DNSName            types.String  `tfsdk:"dns_name"`
+	// SMTP params
+	From               types.String  `tfsdk:"from"`
+	// Email params
+	SmtpPort           types.Int64   `tfsdk:"smtp_port"`
+	Sender             types.String  `tfsdk:"sender"`
+	Recipient          types.String  `tfsdk:"recipient"`
+	PopType            types.String  `tfsdk:"pop_type"`
+	PopHost            types.String  `tfsdk:"pop_host"`
+	PopUser            types.String  `tfsdk:"pop_user"`
+	PopPassword        types.String  `tfsdk:"pop_password"`
+	DeleteMode         types.String  `tfsdk:"delete_mode"`
+	TimeWarning        types.Int64   `tfsdk:"time_warning"`
+	TimeCritical       types.Int64   `tfsdk:"time_critical"`
+	SmtpUser           types.String  `tfsdk:"smtp_user"`
+	SmtpPassword       types.String  `tfsdk:"smtp_password"`
+	SmtpTls            types.Bool    `tfsdk:"smtp_tls"`
+	SmtpHeader1        types.String  `tfsdk:"smtp_header1"`
+	// Database params
+	Database           types.String  `tfsdk:"database"`
+	SQLQuery           types.String  `tfsdk:"sql_query"`
+	MongoConnection    types.String  `tfsdk:"mongo_connection"`
+	// Local Web / Search params
+	SearchItemOk       types.String  `tfsdk:"searchitem_ok"`
+	SearchItemWarning  types.String  `tfsdk:"searchitem_warning"`
+	SearchItemCritical types.String  `tfsdk:"searchitem_critical"`
+	SearchItemNone     types.String  `tfsdk:"searchitem_none"`
+	BasicauthLogin     types.String  `tfsdk:"basicauth_login"`
+	BasicauthPassword  types.String  `tfsdk:"basicauth_password"`
+	DebugAddon         types.String  `tfsdk:"debug_addon"`
+	// Local / Intranet params
+	Command            types.String  `tfsdk:"command"`
+	Token              types.String  `tfsdk:"token"`
+	Silent             types.Int64   `tfsdk:"silent"`
+	// Cron params
+	Cron               types.String  `tfsdk:"cron"`
+	Timezone           types.String  `tfsdk:"timezone"`
+	// System params
+	Def                types.String  `tfsdk:"def"`
+	// Performance params
+	Performance        types.Bool    `tfsdk:"performance"`
+	PerformanceName    types.String  `tfsdk:"performance_name"`
+	PerformanceRegex   types.String  `tfsdk:"performance_regex"`
+	PerformanceUnit    types.String  `tfsdk:"performance_unit"`
+	PerformanceDigits  types.Int64   `tfsdk:"performance_digits"`
+	// Transaction params
+	TransactionID      types.String  `tfsdk:"transaction_id"`
+	// Selenium / Postman params
+	Definition         types.String  `tfsdk:"definition"`
+	Language           types.String  `tfsdk:"language"`
+	SuiteFilter        types.String  `tfsdk:"suite_filter"`
+	// Port Scan params
+	PortRange          types.String  `tfsdk:"port_range"`
+	PortscanNone       types.String  `tfsdk:"portscan_none"`
+	OpenPorts          types.String  `tfsdk:"open_ports"`
+}
+
+// CheckResourceModel holds all attributes for the check resource.
 type CheckResourceModel struct {
-	ID          types.String  `tfsdk:"id"`
-	HostID      types.String `tfsdk:"host_id"`
-	Type        types.String `tfsdk:"type"`
-	Shortname   types.String  `tfsdk:"shortname"`
-	Description types.String  `tfsdk:"description"`
-	Address     types.String  `tfsdk:"address"`
-	Region      types.String  `tfsdk:"region"`
-	IPv6        types.Bool    `tfsdk:"ipv6"`
-	Interval    types.Float64 `tfsdk:"interval"`
-	NotifyAfter types.Float64 `tfsdk:"notify_after"`
-	Reminder    types.Float64 `tfsdk:"reminder_interval"`
-	Message     types.String  `tfsdk:"message"`
-	Active       types.Bool `tfsdk:"active"`
-	Notification types.Bool `tfsdk:"notification"`
+	ID           types.String `tfsdk:"id"`
+	HostID       types.String `tfsdk:"host_id"`
+	Type         types.String `tfsdk:"type"`
+	Shortname    types.String `tfsdk:"shortname"`
+	Description  types.String `tfsdk:"description"`
+	Address      types.String `tfsdk:"address"`
+	Region       types.String `tfsdk:"region"`
+	IPv6         types.Bool   `tfsdk:"ipv6"`
+	Interval     types.Float64 `tfsdk:"interval"`
+	NotifyAfter  types.Float64 `tfsdk:"notify_after"`
+	Reminder     types.Float64 `tfsdk:"reminder_interval"`
+	Message      types.String  `tfsdk:"message"`
+	Active       types.Bool    `tfsdk:"active"`
+	Notification types.Bool    `tfsdk:"notification"`
 
 	// Notification flags
 	EmailCritical types.Bool `tfsdk:"email_critical"`
@@ -156,50 +596,8 @@ type CheckResourceModel struct {
 	PhoneOk       types.Bool `tfsdk:"phone_ok"`
 	PhoneRemind   types.Bool `tfsdk:"phone_remind"`
 
-	// Type-specific fields
-	Path                types.String  `tfsdk:"path"`
-	Timeout             types.Int64   `tfsdk:"timeout"`
-	Port                types.Int64   `tfsdk:"port"`
-	WarningThroughput   types.Float64 `tfsdk:"warning_throughput"`
-	WarningConnect      types.Float64 `tfsdk:"warning_connect"`
-	WarningRoundtrip    types.Float64 `tfsdk:"warning_roundtrip"`
-	CriticalThroughput  types.Float64 `tfsdk:"critical_throughput"`
-	CriticalConnect     types.Float64 `tfsdk:"critical_connect"`
-	CriticalRoundtrip   types.Float64 `tfsdk:"critical_roundtrip"`
-	Protocol            types.String  `tfsdk:"protocol"`
-	ValidityWarning     types.Int64   `tfsdk:"validity_warning"`
-	ValidityCritical    types.Int64   `tfsdk:"validity_critical"`
-	ExpectedIP1         types.String  `tfsdk:"expected_ip1"`
-	ResponseWarning     types.Int64   `tfsdk:"response_warning"`
-	ResponseCritical    types.Int64   `tfsdk:"response_critical"`
-	DNSName             types.String  `tfsdk:"dns_name"`
-	SmtpPort            types.Int64   `tfsdk:"smtp_port"`
-	Sender              types.String  `tfsdk:"sender"`
-	Recipient           types.String  `tfsdk:"recipient"`
-	PopType             types.String  `tfsdk:"pop_type"`
-	PopHost             types.String  `tfsdk:"pop_host"`
-	PopUser             types.String  `tfsdk:"pop_user"`
-	PopPassword         types.String  `tfsdk:"pop_password"`
-	DeleteMode          types.String  `tfsdk:"delete_mode"`
-	TimeWarning         types.Int64   `tfsdk:"time_warning"`
-	TimeCritical        types.Int64   `tfsdk:"time_critical"`
-	Username            types.String  `tfsdk:"username"`
-	Password            types.String  `tfsdk:"password"`
-	Database            types.String  `tfsdk:"database"`
-	SQLQuery            types.String  `tfsdk:"sql_query"`
-	MongoConnection     types.String  `tfsdk:"mongo_connection"`
-	SearchItemOk        types.String  `tfsdk:"searchitem_ok"`
-	SearchItemCritical  types.String  `tfsdk:"searchitem_critical"`
-	SearchItemNone      types.Bool    `tfsdk:"searchitem_none"`
-	Command             types.String  `tfsdk:"command"`
-	Cron                types.String  `tfsdk:"cron"`
-	Timezone            types.String  `tfsdk:"timezone"`
-	Token               types.String  `tfsdk:"token"`
-	TransactionID       types.String  `tfsdk:"transaction_id"`
-	Definition          types.String  `tfsdk:"definition"`
-	Language            types.String  `tfsdk:"language"`
-	PortRange           types.String  `tfsdk:"port_range"`
-	PortscanNone        types.Bool    `tfsdk:"portscan_none"`
+	// Type-specific parameters
+	Params *CheckParamsModel `tfsdk:"params"`
 }
 
 func NewCheckResource() resource.Resource {
@@ -212,22 +610,30 @@ func (r *CheckResource) Metadata(_ context.Context, req resource.MetadataRequest
 
 func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	boolOpt := func(desc string) schema.BoolAttribute {
-		return schema.BoolAttribute{Optional: true, Description: desc, MarkdownDescription: desc}
+		return schema.BoolAttribute{Optional: true, Computed: true, Description: desc, MarkdownDescription: desc,
+			PlanModifiers: []planmodifier.Bool{useStateBoolModifier{}}}
 	}
 	strOpt := func(desc string) schema.StringAttribute {
-		return schema.StringAttribute{Optional: true, Description: desc, MarkdownDescription: desc}
+		return schema.StringAttribute{Optional: true, Computed: true, Description: desc, MarkdownDescription: desc,
+			PlanModifiers: []planmodifier.String{useStateStringModifier{}}}
 	}
 	intOpt := func(desc string) schema.Int64Attribute {
-		return schema.Int64Attribute{Optional: true, Description: desc, MarkdownDescription: desc}
+		return schema.Int64Attribute{Optional: true, Computed: true, Description: desc, MarkdownDescription: desc,
+			PlanModifiers: []planmodifier.Int64{useStateInt64Modifier{}}}
 	}
 	floatOpt := func(desc string) schema.Float64Attribute {
-		return schema.Float64Attribute{Optional: true, Description: desc, MarkdownDescription: desc}
+		return schema.Float64Attribute{Optional: true, Computed: true, Description: desc, MarkdownDescription: desc,
+			PlanModifiers: []planmodifier.Float64{useStateFloat64Modifier{}}}
+	}
+	sensitiveStrOpt := func(desc string) schema.StringAttribute {
+		return schema.StringAttribute{Optional: true, Computed: true, Sensitive: true, Description: desc, MarkdownDescription: desc,
+			PlanModifiers: []planmodifier.String{useStateStringModifier{}}}
 	}
 
 	resp.Schema = schema.Schema{
 		Description:         "Manages a Serverguard24 monitoring check.",
 		MarkdownDescription: "Manages a Serverguard24 monitoring check.",
-		Version:             0,
+		Version:             1,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -240,25 +646,30 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Check type. Valid values: `" + joinStrings(validCheckTypes(), "`, `") + "`.",
 				Validators:          []validator.String{checkTypeValidator{}},
 			},
-			"shortname":        strOpt("Short display name (max 40 characters)."),
-			"description":      strOpt("Description of this check."),
-			"address":          strOpt("Override address for this check."),
-			"region":           strOpt("Monitoring region: 1=Europe, 2=Americas, 3=Europe+Americas, 4=Asia/Pacific, 5=World."),
-			"ipv6":             boolOpt("Use IPv6."),
-			"interval":         floatOpt("Check interval in minutes."),
-			"notify_after":     floatOpt("Notify after N minutes of downtime."),
-			"reminder_interval": floatOpt("Reminder interval in hours."),
-			"message":          strOpt("Custom notification message."),
-			"active": schema.BoolAttribute{
+			"shortname":         strOpt("Short display name (max 40 characters)."),
+			"description":       strOpt("Description of this check."),
+			"address":           strOpt("Override address for this check."),
+			"region": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
+				Description:         "Monitoring region. Valid values: individual, europe, americas, europe_americas, asia_pacific, world. Use \"individual\" to enable per-node selection (configure nodes in the Serverguard24 UI). Numeric IDs (0–5) are accepted for backwards compatibility and normalized to names on read.",
+				MarkdownDescription: "Monitoring region. Valid values: `individual`, `europe`, `americas`, `europe_americas`, `asia_pacific`, `world`. Use `\"individual\"` to enable per-node selection (configure nodes in the Serverguard24 UI). Numeric IDs `0`–`5` are accepted for backwards compatibility.",
+				Validators:          []validator.String{regionValidator{}},
+				PlanModifiers:       []planmodifier.String{useStateStringModifier{}},
+			},
+			"ipv6":              boolOpt("Use IPv6."),
+			"interval":          floatOpt("Check interval in minutes."),
+			"notify_after":      floatOpt("Notify after N minutes of downtime."),
+			"reminder_interval": floatOpt("Reminder interval in hours."),
+			"message":           strOpt("Custom notification message."),
+			"active": schema.BoolAttribute{
+				Optional: true, Computed: true,
 				Default:             booldefault.StaticBool(true),
 				Description:         "Set to false to deactivate the check without deleting it. Defaults to true.",
 				MarkdownDescription: "Set to `false` to deactivate the check without deleting it. Defaults to `true`.",
 			},
 			"notification": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
+				Optional: true, Computed: true,
 				Default:             booldefault.StaticBool(true),
 				Description:         "Enable or disable alert notifications for this check. Defaults to true.",
 				MarkdownDescription: "Enable or disable alert notifications for this check. Defaults to `true`.",
@@ -284,50 +695,124 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"phone_warning":  boolOpt("Send phone call on warning state."),
 			"phone_ok":       boolOpt("Send phone call on recovery."),
 			"phone_remind":   boolOpt("Send phone call reminders."),
-			// Type-specific
-			"path":                 strOpt("URL path (HTTP checks)."),
-			"timeout":              intOpt("Timeout in seconds."),
-			"port":                 intOpt("Port number."),
-			"warning_throughput":   floatOpt("Warning threshold for throughput (KB/s)."),
-			"warning_connect":      floatOpt("Warning threshold for connect time (ms)."),
-			"warning_roundtrip":    floatOpt("Warning threshold for roundtrip time (ms)."),
-			"critical_throughput":  floatOpt("Critical threshold for throughput (KB/s)."),
-			"critical_connect":     floatOpt("Critical threshold for connect time (ms)."),
-			"critical_roundtrip":   floatOpt("Critical threshold for roundtrip time (ms)."),
-			"protocol":             strOpt("Protocol (SSL Cert check)."),
-			"validity_warning":     intOpt("Warn when certificate expires within N days."),
-			"validity_critical":    intOpt("Alert when certificate expires within N days."),
-			"expected_ip1":         strOpt("Expected IP for domain check."),
-			"response_warning":     intOpt("Warning response time (ms) for PING."),
-			"response_critical":    intOpt("Critical response time (ms) for PING."),
-			"dns_name":             strOpt("DNS name to resolve."),
-			"smtp_port":            intOpt("SMTP port for email checks."),
-			"sender":               strOpt("Sender address for email checks."),
-			"recipient":            strOpt("Recipient address for email checks."),
-			"pop_type":             strOpt("POP type for email checks."),
-			"pop_host":             strOpt("POP host for email checks."),
-			"pop_user":             strOpt("POP username for email checks."),
-			"pop_password":         schema.StringAttribute{Optional: true, Sensitive: true, Description: "POP password for email checks.", MarkdownDescription: "POP password for email checks."},
-			"delete_mode":          strOpt("Delete mode for email checks."),
-			"time_warning":         intOpt("Warning delivery time (s) for email checks."),
-			"time_critical":        intOpt("Critical delivery time (s) for email checks."),
-			"username":             strOpt("Username for database checks."),
-			"password":             schema.StringAttribute{Optional: true, Sensitive: true, Description: "Password for database checks.", MarkdownDescription: "Password for database checks."},
-			"database":             strOpt("Database name."),
-			"sql_query":            strOpt("SQL query to execute."),
-			"mongo_connection":     strOpt("MongoDB connection string."),
-			"searchitem_ok":        strOpt("String to search for in OK state."),
-			"searchitem_critical":  strOpt("String to search for in critical state."),
-			"searchitem_none":      boolOpt("Alert if search item is not found."),
-			"command":              strOpt("Command to run (local/intranet checks)."),
-			"cron":                 strOpt("Cron expression for cron checks."),
-			"timezone":             strOpt("Timezone for cron checks."),
-			"token":                schema.StringAttribute{Optional: true, Sensitive: true, Description: "Token for system checks.", MarkdownDescription: "Token for system checks."},
-			"transaction_id":       strOpt("Transaction ID for TransAct checks."),
-			"definition":           strOpt("Script definition (Selenium/Postman checks)."),
-			"language":             strOpt("Script language (Selenium checks)."),
-			"port_range":           strOpt("Port range for port scan checks."),
-			"portscan_none":        boolOpt("Alert if no open ports found."),
+		},
+		Blocks: map[string]schema.Block{
+			"params": schema.SingleNestedBlock{
+				Description:         "Type-specific parameters. Valid attributes depend on the check type.",
+				MarkdownDescription: "Type-specific parameters. Valid attributes depend on the check type.",
+				PlanModifiers:       []planmodifier.Object{useStateObjectModifier{}},
+				Attributes: map[string]schema.Attribute{
+					// Common
+					"path":               strOpt("URL path."),
+					"timeout":            intOpt("Timeout in seconds."),
+					"port":               intOpt("Port number."),
+					"ssl":                boolOpt("Enable SSL/TLS encryption."),
+					"ssl_version":        strOpt(`SSL/TLS protocol version. Valid values depend on check type — http/http_perf: "auto", "tlsv1", "sslv3"; ssl_cert: "auto", "tlsv1", "sslv3"; smtp: "none", "tls", "ssl".`),
+					"check_cert":         boolOpt("Verify SSL certificate."),
+					"auth_type":          strOpt(`Authentication method: "none", "basic", "ntlm".`),
+					"login":              strOpt("Login username for authentication."),
+					"password":           sensitiveStrOpt("Password."),
+					"username":           strOpt("Username (database checks)."),
+					"useragent":          strOpt("User agent string."),
+					"host_header":        strOpt("Alternative host header for load balancers."),
+					// HTTP
+					"searchitem":         strOpt("Search term that must be found on the page."),
+					"method":             strOpt("HTTP method (GET, POST, PUT, PATCH, DELETE)."),
+					"postvars":           strOpt("POST variables (field1=val1&field2=val2)."),
+					"regex":              strOpt("Search term as regular expression."),
+					"invert_regex":       boolOpt("Negate regex match."),
+					"header_regex":       strOpt("Regex matched against response headers."),
+					"min_size":           intOpt("Minimum page size in bytes."),
+					"max_size":           intOpt("Maximum page size in bytes."),
+					"addheader1":         strOpt("Additional HTTP header (Name: Value)."),
+					"addheader2":         strOpt("Additional HTTP header."),
+					"addheader3":         strOpt("Additional HTTP header."),
+					"content_type":       strOpt("Content-Type for the request."),
+					"status_code":        intOpt("Expected HTTP status code (0=ignore, default: 200)."),
+					"redirect":           boolOpt("Follow HTTP redirects (301/302)."),
+					// Perf
+					"warning_throughput":  floatOpt("Warning threshold for throughput (KB/s)."),
+					"warning_connect":     floatOpt("Warning threshold for connect time (ms)."),
+					"warning_roundtrip":   floatOpt("Warning threshold for roundtrip time (ms)."),
+					"critical_throughput": floatOpt("Critical threshold for throughput (KB/s)."),
+					"critical_connect":    floatOpt("Critical threshold for connect time (ms)."),
+					"critical_roundtrip":  floatOpt("Critical threshold for roundtrip time (ms)."),
+					"performance_none":    strOpt(`Status when no performance value can be measured: "unknown", "critical".`),
+					// SSL Cert
+					"protocol":           strOpt("Protocol (HTTPS, SMTPS, IMAPS, POP3S)."),
+					"validity_warning":   intOpt("Warn when cert expires within N days."),
+					"validity_critical":  intOpt("Alert when cert expires within N days."),
+					"different_ip":       strOpt("Alternative node IP for load balancers."),
+					// Domain
+					"expected_ip1":       strOpt("Expected IP address or domain."),
+					"expected_ip2":       strOpt("Additional expected address."),
+					"expected_ip3":       strOpt("Additional expected address."),
+					"expected_ip4":       strOpt("Additional expected address."),
+					"expected_iplink":    strOpt("Address link logic (OR, AND, ALL)."),
+					"dns_server":         strOpt("DNS server to use."),
+					"dns_record":         strOpt("DNS record type (A, AAAA, CNAME, MX)."),
+					"dns_auth":           strOpt("DNS server must be authoritative."),
+					// PING
+					"response_warning":   intOpt("Warning response time (ms)."),
+					"response_critical":  intOpt("Critical response time (ms)."),
+					// DNS
+					"dns_name":           strOpt("DNS name to resolve."),
+					// SMTP
+					"from":               strOpt("From address for SMTP MAILTO command."),
+					// Email
+					"smtp_port":          intOpt("SMTP port for email checks."),
+					"sender":             strOpt("Sender email address."),
+					"recipient":          strOpt("Recipient email address."),
+					"pop_type":           strOpt(`Recipient mailbox type: "pop3", "imap", "pop3s", "imaps".`),
+					"pop_host":           strOpt("Mailbox server address."),
+					"pop_user":           strOpt("POP/IMAP username."),
+					"pop_password":       sensitiveStrOpt("POP/IMAP password."),
+					"delete_mode":        strOpt(`Email deletion mode: "ok_only" (delete only test emails that arrived OK), "all" (delete all emails).`),
+					"time_warning":       intOpt("Warning delivery time (minutes)."),
+					"time_critical":      intOpt("Critical delivery time (minutes)."),
+					"smtp_user":          strOpt("SMTP username."),
+					"smtp_password":      sensitiveStrOpt("SMTP password."),
+					"smtp_tls":           boolOpt("SMTP encryption."),
+					"smtp_header1":       strOpt("Additional SMTP header."),
+					// Database
+					"database":           strOpt("Database name."),
+					"sql_query":          strOpt("SQL query to execute."),
+					"mongo_connection":   strOpt(`MongoDB connection type: "mongodb" (standard URI) or "mongodb_srv" (SRV URI).`),
+					// Local Web / Search
+					"searchitem_ok":       strOpt("Search term indicating OK status."),
+					"searchitem_warning":  strOpt("Search term indicating Warning status."),
+					"searchitem_critical": strOpt("Search term indicating Critical status."),
+					"searchitem_none":     strOpt(`Status when no search term is found: "warning", "critical", "unknown".`),
+					"basicauth_login":     strOpt("Basic Authentication username."),
+					"basicauth_password":  sensitiveStrOpt("Basic Authentication password."),
+					"debug_addon":         strOpt("URL debug suffix."),
+					// Local / Intranet
+					"command":            strOpt("Command to run (local/intranet checks). Sent as 'cmd' to the API."),
+					"token":              sensitiveStrOpt("Check token (e.g. intranet/NCPA). Generated by Serverguard24 when omitted."),
+					"silent":             intOpt("Warning after x minutes of silence (0=disabled)."),
+					// Cron
+					"cron":               strOpt("Cron expression."),
+					"timezone":           strOpt("Timezone for cron checks."),
+					// System
+					"def":                strOpt("System check definition."),
+					// Performance
+					"performance":        boolOpt("Check returns performance data."),
+					"performance_name":   strOpt("Performance value label."),
+					"performance_regex":  strOpt("Regex to extract performance value."),
+					"performance_unit":   strOpt("Performance value unit."),
+					"performance_digits": intOpt("Performance value decimal places (0-5)."),
+					// Transaction
+					"transaction_id":     strOpt("Transaction ID for TransAct checks."),
+					// Selenium / Postman
+					"definition":         strOpt("Script definition (Selenium/Postman)."),
+					"language":           strOpt("Script language (Selenium)."),
+					"suite_filter":       strOpt("Test suite filter (Selenium)."),
+					// Port Scan
+					"port_range":         strOpt("Port range to scan."),
+					"portscan_none":      strOpt(`Status when port scan is not possible: "critical", "unknown".`),
+					"open_ports":         strOpt("Allowed open ports."),
+				},
+			},
 		},
 	}
 }
@@ -342,6 +827,172 @@ func (r *CheckResource) Configure(_ context.Context, req resource.ConfigureReque
 		return
 	}
 	r.client = c
+}
+
+// ValidateConfig checks that only params valid for the selected check type are set.
+func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var config CheckResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if config.Type.IsNull() || config.Type.IsUnknown() {
+		return
+	}
+	typeName := config.Type.ValueString()
+
+	allowed, ok := allowedParamsByType[typeName]
+	if !ok {
+		return // type validator catches invalid types
+	}
+
+	if config.Params == nil {
+		return
+	}
+
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		allowedSet[a] = true
+	}
+
+	// Check each non-null param against the allowed set
+	for _, pc := range paramsSetFields(config.Params) {
+		if pc.isSet && !allowedSet[pc.name] {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("params").AtName(pc.name),
+				"Invalid parameter for check type",
+				fmt.Sprintf("Parameter %q is not valid for check type %q. Valid parameters: %s",
+					pc.name, typeName, strings.Join(allowed, ", ")),
+			)
+		}
+	}
+
+	// Check that all required params for this type are present.
+	required := requiredParamsByType[typeName]
+	if len(required) > 0 {
+		setMap := make(map[string]bool, len(paramsSetFields(config.Params)))
+		for _, pc := range paramsSetFields(config.Params) {
+			if pc.isSet {
+				setMap[pc.name] = true
+			}
+		}
+		for _, req := range required {
+			if !setMap[req] {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("params").AtName(req),
+					"Missing required parameter",
+					fmt.Sprintf("Parameter %q is required for check type %q.", req, typeName),
+				)
+			}
+		}
+	}
+
+	// Validate ssl_version string value against the type-specific allowed set.
+	if p := config.Params; p != nil && allowedSet["ssl_version"] &&
+		!p.SslVersion.IsNull() && !p.SslVersion.IsUnknown() {
+		nameToID, _ := sslVersionMaps(typeName)
+		if _, ok := nameToID[p.SslVersion.ValueString()]; !ok {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("params").AtName("ssl_version"),
+				"Invalid ssl_version",
+				fmt.Sprintf("ssl_version %q is not valid for check type %q. Valid values: %s",
+					p.SslVersion.ValueString(), typeName,
+					strings.Join(validSSLVersions(typeName), ", ")),
+			)
+		}
+	}
+
+	validateEnumParam := func(attrName string, value types.String, valid map[string]string) {
+		if config.Params == nil || !allowedSet[attrName] || value.IsNull() || value.IsUnknown() {
+			return
+		}
+		if _, ok := valid[value.ValueString()]; !ok {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("params").AtName(attrName),
+				fmt.Sprintf("Invalid %s", attrName),
+				fmt.Sprintf("%q is not valid. Allowed: %s", value.ValueString(),
+					strings.Join(sortedStringKeys(valid), ", ")),
+			)
+		}
+	}
+	validateEnumParamInt := func(attrName string, value types.String, valid map[string]int64) {
+		if config.Params == nil || !allowedSet[attrName] || value.IsNull() || value.IsUnknown() {
+			return
+		}
+		if _, ok := valid[value.ValueString()]; !ok {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("params").AtName(attrName),
+				fmt.Sprintf("Invalid %s", attrName),
+				fmt.Sprintf("%q is not valid. Allowed: %s", value.ValueString(),
+					strings.Join(sortedStringKeys(valid), ", ")),
+			)
+		}
+	}
+
+	if p := config.Params; p != nil {
+		validateEnumParam("auth_type", p.AuthType, authTypeByName)
+		validateEnumParamInt("performance_none", p.PerformanceNone, performanceNoneByName)
+		validateEnumParamInt("pop_type", p.PopType, popTypeByName)
+		validateEnumParamInt("delete_mode", p.DeleteMode, deleteModeByName)
+		validateEnumParamInt("mongo_connection", p.MongoConnection, mongoConnectionByName)
+		validateEnumParamInt("searchitem_none", p.SearchItemNone, searchItemNoneByName)
+		validateEnumParamInt("portscan_none", p.PortscanNone, portscanNoneByName)
+	}
+}
+
+type paramCheck struct {
+	name  string
+	isSet bool
+}
+
+func isSet(v interface{ IsNull() bool; IsUnknown() bool }) bool {
+	return !v.IsNull() && !v.IsUnknown()
+}
+
+func paramsSetFields(p *CheckParamsModel) []paramCheck {
+	return []paramCheck{
+		{"path", isSet(p.Path)}, {"timeout", isSet(p.Timeout)}, {"port", isSet(p.Port)},
+		{"ssl", isSet(p.Ssl)}, {"ssl_version", isSet(p.SslVersion)}, {"check_cert", isSet(p.CheckCert)},
+		{"auth_type", isSet(p.AuthType)}, {"login", isSet(p.Login)}, {"password", isSet(p.Password)},
+		{"username", isSet(p.Username)}, {"useragent", isSet(p.Useragent)}, {"host_header", isSet(p.HostHeader)},
+		{"searchitem", isSet(p.Searchitem)}, {"method", isSet(p.Method)}, {"postvars", isSet(p.Postvars)},
+		{"regex", isSet(p.Regex)}, {"invert_regex", isSet(p.InvertRegex)}, {"header_regex", isSet(p.HeaderRegex)},
+		{"min_size", isSet(p.MinSize)}, {"max_size", isSet(p.MaxSize)},
+		{"addheader1", isSet(p.Addheader1)}, {"addheader2", isSet(p.Addheader2)}, {"addheader3", isSet(p.Addheader3)},
+		{"content_type", isSet(p.ContentType)}, {"status_code", isSet(p.StatusCode)}, {"redirect", isSet(p.Redirect)},
+		{"warning_throughput", isSet(p.WarningThroughput)}, {"warning_connect", isSet(p.WarningConnect)},
+		{"warning_roundtrip", isSet(p.WarningRoundtrip)}, {"critical_throughput", isSet(p.CriticalThroughput)},
+		{"critical_connect", isSet(p.CriticalConnect)}, {"critical_roundtrip", isSet(p.CriticalRoundtrip)},
+		{"performance_none", isSet(p.PerformanceNone)},
+		{"protocol", isSet(p.Protocol)}, {"validity_warning", isSet(p.ValidityWarning)},
+		{"validity_critical", isSet(p.ValidityCritical)}, {"different_ip", isSet(p.DifferentIP)},
+		{"expected_ip1", isSet(p.ExpectedIP1)}, {"expected_ip2", isSet(p.ExpectedIP2)},
+		{"expected_ip3", isSet(p.ExpectedIP3)}, {"expected_ip4", isSet(p.ExpectedIP4)},
+		{"expected_iplink", isSet(p.ExpectedIPLink)}, {"dns_server", isSet(p.DnsServer)},
+		{"dns_record", isSet(p.DnsRecord)}, {"dns_auth", isSet(p.DnsAuth)},
+		{"response_warning", isSet(p.ResponseWarning)}, {"response_critical", isSet(p.ResponseCritical)},
+		{"dns_name", isSet(p.DNSName)}, {"from", isSet(p.From)},
+		{"smtp_port", isSet(p.SmtpPort)}, {"sender", isSet(p.Sender)}, {"recipient", isSet(p.Recipient)},
+		{"pop_type", isSet(p.PopType)}, {"pop_host", isSet(p.PopHost)}, {"pop_user", isSet(p.PopUser)},
+		{"pop_password", isSet(p.PopPassword)}, {"delete_mode", isSet(p.DeleteMode)},
+		{"time_warning", isSet(p.TimeWarning)}, {"time_critical", isSet(p.TimeCritical)},
+		{"smtp_user", isSet(p.SmtpUser)}, {"smtp_password", isSet(p.SmtpPassword)},
+		{"smtp_tls", isSet(p.SmtpTls)}, {"smtp_header1", isSet(p.SmtpHeader1)},
+		{"database", isSet(p.Database)}, {"sql_query", isSet(p.SQLQuery)}, {"mongo_connection", isSet(p.MongoConnection)},
+		{"searchitem_ok", isSet(p.SearchItemOk)}, {"searchitem_warning", isSet(p.SearchItemWarning)},
+		{"searchitem_critical", isSet(p.SearchItemCritical)}, {"searchitem_none", isSet(p.SearchItemNone)},
+		{"basicauth_login", isSet(p.BasicauthLogin)}, {"basicauth_password", isSet(p.BasicauthPassword)},
+		{"debug_addon", isSet(p.DebugAddon)},
+		{"command", isSet(p.Command)}, {"token", isSet(p.Token)}, {"silent", isSet(p.Silent)},
+		{"cron", isSet(p.Cron)}, {"timezone", isSet(p.Timezone)}, {"def", isSet(p.Def)},
+		{"performance", isSet(p.Performance)}, {"performance_name", isSet(p.PerformanceName)},
+		{"performance_regex", isSet(p.PerformanceRegex)}, {"performance_unit", isSet(p.PerformanceUnit)},
+		{"performance_digits", isSet(p.PerformanceDigits)},
+		{"transaction_id", isSet(p.TransactionID)}, {"definition", isSet(p.Definition)},
+		{"language", isSet(p.Language)}, {"suite_filter", isSet(p.SuiteFilter)},
+		{"port_range", isSet(p.PortRange)}, {"portscan_none", isSet(p.PortscanNone)}, {"open_ports", isSet(p.OpenPorts)},
+	}
 }
 
 func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -380,32 +1031,26 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state CheckResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
+// refreshFromAPI calls service_show and merges the API response into state.
+// Returns false if the resource no longer exists (caller should remove from state).
+// host_id is preserved from the existing state since service_show does not return it.
+func (r *CheckResource) refreshFromAPI(id string, state *CheckResourceModel) (found bool, err error) {
 	apiResp, err := r.client.Do(client.Request{
 		"command": "service_show",
-		"id":      state.ID.ValueString(),
+		"id":      id,
 	})
 	if err != nil {
 		if client.IsNotFound(err) {
-			resp.State.RemoveResource(ctx)
-			return
+			return false, nil
 		}
-		resp.Diagnostics.AddError("Error reading check", err.Error())
-		return
+		return false, err
 	}
 
 	// service_show returns a single object. Flatten nested sub-objects so that
 	// applyCheckData can access all fields at the top level.
 	var raw map[string]interface{}
 	if err := json.Unmarshal(apiResp.Data, &raw); err != nil {
-		resp.Diagnostics.AddError("Error parsing check data", err.Error())
-		return
+		return false, err
 	}
 	if params, ok := raw["params"].(map[string]interface{}); ok {
 		for k, v := range params {
@@ -418,7 +1063,27 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		}
 	}
 
-	applyCheckData(&state, raw)
+	applyCheckData(state, raw)
+	return true, nil
+}
+
+func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state CheckResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	found, err := r.refreshFromAPI(state.ID.ValueString(), &state)
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading check", err.Error())
+		return
+	}
+	if !found {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -490,9 +1155,29 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	}
 
 	setOptionalString(cmd, "shortname", m.Shortname)
-	setOptionalString(cmd, "description", m.Description)
+	// Only send description when non-empty — the API incorrectly uses the
+	// description value to overwrite the display name (shortname). Sending
+	// an empty description clears the name.
+	if !m.Description.IsNull() && !m.Description.IsUnknown() && m.Description.ValueString() != "" {
+		cmd["description"] = m.Description.ValueString()
+	}
 	setOptionalString(cmd, "address", m.Address)
-	setOptionalString(cmd, "region", m.Region)
+	// region is stored as a name string but the API expects an integer ID.
+	// Accept both named ("europe") and legacy numeric ("1") forms.
+	// region=0 ("individual") is NOT sent — it is the API default and the API
+	// rejects it as an invalid input value (valid inputs are 1–5 for service_add/edit).
+	if !m.Region.IsNull() && !m.Region.IsUnknown() {
+		val := m.Region.ValueString()
+		var regionID int64
+		if id, ok := regionByName[val]; ok {
+			regionID = id
+		} else if id, err := strconv.ParseInt(val, 10, 64); err == nil {
+			regionID = id
+		}
+		if regionID > 0 {
+			cmd["region"] = regionID
+		}
+	}
 	setOptionalString(cmd, "message", m.Message)
 
 	// The API returns HTTP 500 when notification flags or bool fields are sent
@@ -515,9 +1200,16 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	}
 
 	setOptionalBoolAsInt("ipv6", m.IPv6)
-	setOptionalFloat("interval", m.Interval)
-	setOptionalFloat("notify_after", m.NotifyAfter)
-	setOptionalFloat("reminder_interval", m.Reminder)
+	// The API rejects interval/notify_after/reminder_interval when 0; only send non-zero values.
+	if !m.Interval.IsNull() && !m.Interval.IsUnknown() && m.Interval.ValueFloat64() != 0 {
+		cmd["interval"] = m.Interval.ValueFloat64()
+	}
+	if !m.NotifyAfter.IsNull() && !m.NotifyAfter.IsUnknown() && m.NotifyAfter.ValueFloat64() != 0 {
+		cmd["notify_after"] = m.NotifyAfter.ValueFloat64()
+	}
+	if !m.Reminder.IsNull() && !m.Reminder.IsUnknown() && m.Reminder.ValueFloat64() != 0 {
+		cmd["reminder_interval"] = m.Reminder.ValueFloat64()
+	}
 
 	setOptionalBoolAsInt("email_critical", m.EmailCritical)
 	setOptionalBoolAsInt("email_warning", m.EmailWarning)
@@ -540,114 +1232,223 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 	setOptionalBoolAsInt("phone_ok", m.PhoneOk)
 	setOptionalBoolAsInt("phone_remind", m.PhoneRemind)
 
-	setOptionalString(cmd, "path", m.Path)
-	setOptionalInt("timeout", m.Timeout)
-	setOptionalInt("port", m.Port)
-	setOptionalFloat("warning_throughput", m.WarningThroughput)
-	setOptionalFloat("warning_connect", m.WarningConnect)
-	setOptionalFloat("warning_roundtrip", m.WarningRoundtrip)
-	setOptionalFloat("critical_throughput", m.CriticalThroughput)
-	setOptionalFloat("critical_connect", m.CriticalConnect)
-	setOptionalFloat("critical_roundtrip", m.CriticalRoundtrip)
-	setOptionalString(cmd, "protocol", m.Protocol)
-	setOptionalInt("validity_warning", m.ValidityWarning)
-	setOptionalInt("validity_critical", m.ValidityCritical)
-	setOptionalString(cmd, "expected_ip1", m.ExpectedIP1)
-	setOptionalInt("response_warning", m.ResponseWarning)
-	setOptionalInt("response_critial", m.ResponseCritical) // API uses this spelling (typo in API)
-	setOptionalString(cmd, "dns_name", m.DNSName)
-	setOptionalInt("smtp_port", m.SmtpPort)
-	setOptionalString(cmd, "sender", m.Sender)
-	setOptionalString(cmd, "recipient", m.Recipient)
-	setOptionalString(cmd, "pop_type", m.PopType)
-	setOptionalString(cmd, "pop_host", m.PopHost)
-	setOptionalString(cmd, "pop_user", m.PopUser)
-	setOptionalString(cmd, "pop_password", m.PopPassword)
-	setOptionalString(cmd, "delete_mode", m.DeleteMode)
-	setOptionalInt("time_warning", m.TimeWarning)
-	setOptionalInt("time_critical", m.TimeCritical)
-	setOptionalString(cmd, "username", m.Username)
-	setOptionalString(cmd, "password", m.Password)
-	setOptionalString(cmd, "database", m.Database)
-	setOptionalString(cmd, "sql_query", m.SQLQuery)
-	setOptionalString(cmd, "connection", m.MongoConnection)
-	setOptionalString(cmd, "searchitem_ok", m.SearchItemOk)
-	setOptionalString(cmd, "searchitem_critical", m.SearchItemCritical)
-	setOptionalBoolAsInt("searchitem_none", m.SearchItemNone)
-	setOptionalString(cmd, "command", m.Command)
-	setOptionalString(cmd, "cron", m.Cron)
-	setOptionalString(cmd, "timezone", m.Timezone)
-	setOptionalString(cmd, "token", m.Token)
-	setOptionalString(cmd, "transaction_id", m.TransactionID)
-	setOptionalString(cmd, "definition", m.Definition)
-	setOptionalString(cmd, "language", m.Language)
-	setOptionalString(cmd, "port_range", m.PortRange)
-	setOptionalBoolAsInt("portscan_none", m.PortscanNone)
+	// Type-specific parameters from the params block (sent flat at API top level)
+	if p := m.Params; p != nil {
+		setOptionalString(cmd, "path", p.Path)
+		setOptionalInt("timeout", p.Timeout)
+		setOptionalInt("port", p.Port)
+		setOptionalBoolAsInt("ssl", p.Ssl)
+		if !p.SslVersion.IsNull() && !p.SslVersion.IsUnknown() {
+			nameToID, _ := sslVersionMaps(m.Type.ValueString())
+			if id, ok := nameToID[p.SslVersion.ValueString()]; ok {
+				cmd["ssl_version"] = id
+			}
+		}
+		setOptionalBoolAsInt("check_cert", p.CheckCert)
+		if !p.AuthType.IsNull() && !p.AuthType.IsUnknown() {
+			if code, ok := authTypeByName[p.AuthType.ValueString()]; ok {
+				cmd["auth_type"] = code
+			}
+		}
+		setOptionalString(cmd, "login", p.Login)
+		setOptionalString(cmd, "password", p.Password)
+		setOptionalString(cmd, "username", p.Username)
+		setOptionalString(cmd, "useragent", p.Useragent)
+		setOptionalString(cmd, "host_header", p.HostHeader)
+		setOptionalString(cmd, "searchitem", p.Searchitem)
+		setOptionalString(cmd, "method", p.Method)
+		setOptionalString(cmd, "postvars", p.Postvars)
+		setOptionalString(cmd, "regex", p.Regex)
+		setOptionalBoolAsInt("invert-regex", p.InvertRegex) // API uses hyphen
+		setOptionalString(cmd, "header-regex", p.HeaderRegex) // API uses hyphen
+		setOptionalInt("min_size", p.MinSize)
+		setOptionalInt("max_size", p.MaxSize)
+		setOptionalString(cmd, "addheader1", p.Addheader1)
+		setOptionalString(cmd, "addheader2", p.Addheader2)
+		setOptionalString(cmd, "addheader3", p.Addheader3)
+		setOptionalString(cmd, "content_type", p.ContentType)
+		setOptionalInt("status_code", p.StatusCode)
+		setOptionalBoolAsInt("redirect", p.Redirect)
+		setOptionalFloat("warning_throughput", p.WarningThroughput)
+		setOptionalFloat("warning_connect", p.WarningConnect)
+		setOptionalFloat("warning_roundtrip", p.WarningRoundtrip)
+		setOptionalFloat("critical_throughput", p.CriticalThroughput)
+		setOptionalFloat("critical_connect", p.CriticalConnect)
+		setOptionalFloat("critical_roundtrip", p.CriticalRoundtrip)
+		if !p.PerformanceNone.IsNull() && !p.PerformanceNone.IsUnknown() {
+			if id, ok := performanceNoneByName[p.PerformanceNone.ValueString()]; ok {
+				cmd["performance_none"] = id
+			}
+		}
+		setOptionalString(cmd, "protocol", p.Protocol)
+		setOptionalInt("validity_warning", p.ValidityWarning)
+		setOptionalInt("validity_critical", p.ValidityCritical)
+		setOptionalString(cmd, "different_ip", p.DifferentIP)
+		setOptionalString(cmd, "expected_ip1", p.ExpectedIP1)
+		setOptionalString(cmd, "expected_ip2", p.ExpectedIP2)
+		setOptionalString(cmd, "expected_ip3", p.ExpectedIP3)
+		setOptionalString(cmd, "expected_ip4", p.ExpectedIP4)
+		setOptionalString(cmd, "expected_iplink", p.ExpectedIPLink)
+		setOptionalString(cmd, "dns_server", p.DnsServer)
+		setOptionalString(cmd, "dns_record", p.DnsRecord)
+		setOptionalString(cmd, "dns_auth", p.DnsAuth)
+		setOptionalInt("response_warning", p.ResponseWarning)
+		setOptionalInt("response_critial", p.ResponseCritical) // API uses this spelling (typo in API)
+		setOptionalString(cmd, "dns_name", p.DNSName)
+		setOptionalString(cmd, "from", p.From)
+		setOptionalInt("smtp_port", p.SmtpPort)
+		setOptionalString(cmd, "sender", p.Sender)
+		setOptionalString(cmd, "recipient", p.Recipient)
+		if !p.PopType.IsNull() && !p.PopType.IsUnknown() {
+			if id, ok := popTypeByName[p.PopType.ValueString()]; ok {
+				cmd["pop_type"] = id
+			}
+		}
+		setOptionalString(cmd, "pop_host", p.PopHost)
+		setOptionalString(cmd, "pop_user", p.PopUser)
+		setOptionalString(cmd, "pop_password", p.PopPassword)
+		if !p.DeleteMode.IsNull() && !p.DeleteMode.IsUnknown() {
+			if id, ok := deleteModeByName[p.DeleteMode.ValueString()]; ok {
+				cmd["delete_mode"] = id
+			}
+		}
+		setOptionalInt("time_warning", p.TimeWarning)
+		setOptionalInt("time_critical", p.TimeCritical)
+		setOptionalString(cmd, "smtp_user", p.SmtpUser)
+		setOptionalString(cmd, "smtp_password", p.SmtpPassword)
+		setOptionalBoolAsInt("smtp_tls", p.SmtpTls)
+		setOptionalString(cmd, "smtp_header1", p.SmtpHeader1)
+		setOptionalString(cmd, "database", p.Database)
+		setOptionalString(cmd, "sql_query", p.SQLQuery)
+		if !p.MongoConnection.IsNull() && !p.MongoConnection.IsUnknown() {
+			if id, ok := mongoConnectionByName[p.MongoConnection.ValueString()]; ok {
+				cmd["connection"] = id
+			}
+		}
+		setOptionalString(cmd, "searchitem_ok", p.SearchItemOk)
+		setOptionalString(cmd, "searchitem_warning", p.SearchItemWarning)
+		setOptionalString(cmd, "searchitem_critical", p.SearchItemCritical)
+		if !p.SearchItemNone.IsNull() && !p.SearchItemNone.IsUnknown() {
+			if id, ok := searchItemNoneByName[p.SearchItemNone.ValueString()]; ok {
+				cmd["searchitem_none"] = id
+			}
+		}
+		setOptionalString(cmd, "basicauth_login", p.BasicauthLogin)
+		setOptionalString(cmd, "basicauth_password", p.BasicauthPassword)
+		setOptionalString(cmd, "debug_addon", p.DebugAddon)
+		setOptionalString(cmd, "cmd", p.Command)
+		setOptionalString(cmd, "token", p.Token)
+		setOptionalInt("silent", p.Silent)
+		setOptionalString(cmd, "cron", p.Cron)
+		setOptionalString(cmd, "timezone", p.Timezone)
+		setOptionalString(cmd, "def", p.Def)
+		setOptionalBoolAsInt("performance", p.Performance)
+		setOptionalString(cmd, "performance_name", p.PerformanceName)
+		setOptionalString(cmd, "performance_regex", p.PerformanceRegex)
+		setOptionalString(cmd, "performance_unit", p.PerformanceUnit)
+		setOptionalInt("performance_digits", p.PerformanceDigits)
+		setOptionalString(cmd, "transaction_id", p.TransactionID)
+		setOptionalString(cmd, "definition", p.Definition)
+		setOptionalString(cmd, "language", p.Language)
+		setOptionalString(cmd, "suite_filter", p.SuiteFilter)
+		setOptionalString(cmd, "port_range", p.PortRange)
+		if !p.PortscanNone.IsNull() && !p.PortscanNone.IsUnknown() {
+			if id, ok := portscanNoneByName[p.PortscanNone.ValueString()]; ok {
+				cmd["portscan_none"] = id
+			}
+		}
+		setOptionalString(cmd, "open_ports", p.OpenPorts)
+	}
 
 	return cmd
 }
 
 // applyCheckData updates state fields from the API response.
-// Fields that are null in the current state (not configured by the user) are
-// preserved as null so Terraform does not produce spurious diffs.
+// When the API returns a value for a key, it always overwrites the current state
+// (important for import where all fields start as null). When a key is absent
+// from the API response, the current state value is preserved.
 func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
+	// These helpers always write API values to state. This ensures import works
+	// correctly (all fields start null and get populated from the API).
 	getString := func(key string, cur types.String) types.String {
-		if cur.IsNull() || cur.IsUnknown() {
-			return cur
-		}
-		if v, ok := raw[key].(string); ok {
+		switch v := raw[key].(type) {
+		case string:
 			return types.StringValue(v)
+		case float64:
+			if v == float64(int64(v)) {
+				return types.StringValue(fmt.Sprintf("%d", int64(v)))
+			}
+			return types.StringValue(fmt.Sprintf("%g", v))
 		}
-		return cur // key absent in API response — preserve configured value
+		return cur
 	}
 	getBool := func(key string, cur types.Bool) types.Bool {
-		if cur.IsNull() || cur.IsUnknown() {
-			return cur
-		}
 		switch v := raw[key].(type) {
 		case float64:
 			return types.BoolValue(v == 1)
 		case bool:
 			return types.BoolValue(v)
 		}
-		return cur // key absent in API response — preserve configured value
+		return cur
 	}
 	getFloat := func(key string, cur types.Float64) types.Float64 {
-		if cur.IsNull() || cur.IsUnknown() {
-			return cur
-		}
 		if v, ok := raw[key].(float64); ok {
 			return types.Float64Value(v)
 		}
-		return cur // key absent in API response — preserve configured value
+		return cur
 	}
 	getInt := func(key string, cur types.Int64) types.Int64 {
-		if cur.IsNull() || cur.IsUnknown() {
-			return cur
-		}
 		if v, ok := raw[key].(float64); ok {
 			return types.Int64Value(int64(v))
 		}
-		return cur // key absent in API response — preserve configured value
+		return cur
 	}
 
-	// "active" and "notification_active" are always present in service_show.
+	// service_show returns the check type as a display name (e.g. "Intranet"),
+	// not as the integer ID. Map it back to the internal name.
+	if v, ok := raw["name"].(string); ok {
+		if typeName, found := checkTypeByDisplayName[strings.ToLower(v)]; found {
+			state.Type = types.StringValue(typeName)
+		}
+	}
+
+	// "active" is always present in service_show.
 	if v, ok := raw["active"].(float64); ok {
 		state.Active = types.BoolValue(v == 1)
 	}
-	if v, ok := raw["notification_active"].(float64); ok {
+	// service_show uses "notifications" (not "notification_active").
+	if v, ok := raw["notifications"].(float64); ok {
 		state.Notification = types.BoolValue(v == 1)
 	}
 
+	state.HostID = getString("host_id", state.HostID)
 	state.Shortname = getString("shortname", state.Shortname)
 	state.Description = getString("description", state.Description)
 	state.Address = getString("address", state.Address)
-	state.Region = getString("region", state.Region)
+	// region: API returns a numeric ID; normalize to the canonical name form.
+	// When the API returns 0 ("individual" / no specific region), do NOT update state —
+	// keep whatever the user configured (null if not set). This prevents region=0 from
+	// being injected into state and later sent back to the API, which rejects it (API
+	// only accepts region IDs 1–5 as valid inputs in service_add/edit).
+	if v, ok := raw["region"].(float64); ok && int64(v) != 0 {
+		if name, ok := regionByID[int64(v)]; ok {
+			state.Region = types.StringValue(name)
+		} else {
+			state.Region = types.StringValue(fmt.Sprintf("%g", v))
+		}
+	}
 	state.Message = getString("message", state.Message)
 	state.IPv6 = getBool("ipv6", state.IPv6)
-	state.Interval = getFloat("interval", state.Interval)
+	// service_show uses "check_interval" instead of "interval", and returns it in
+	// seconds while service_add/service_edit expect minutes.
+	if v, ok := raw["check_interval"].(float64); ok {
+		state.Interval = types.Float64Value(v / 60)
+	}
 	state.NotifyAfter = getFloat("notify_after", state.NotifyAfter)
-	state.Reminder = getFloat("reminder_interval", state.Reminder)
+	// service_show returns "reminder_after" in seconds; schema uses hours.
+	if v, ok := raw["reminder_after"].(float64); ok {
+		state.Reminder = types.Float64Value(v / 3600)
+	}
 	state.EmailCritical = getBool("email_critical", state.EmailCritical)
 	state.EmailWarning = getBool("email_warning", state.EmailWarning)
 	state.EmailOk = getBool("email_ok", state.EmailOk)
@@ -668,49 +1469,165 @@ func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
 	state.PhoneWarning = getBool("phone_warning", state.PhoneWarning)
 	state.PhoneOk = getBool("phone_ok", state.PhoneOk)
 	state.PhoneRemind = getBool("phone_remind", state.PhoneRemind)
-	state.Path = getString("path", state.Path)
-	state.Timeout = getInt("timeout", state.Timeout)
-	state.Port = getInt("port", state.Port)
-	state.WarningThroughput = getFloat("warning_throughput", state.WarningThroughput)
-	state.WarningConnect = getFloat("warning_connect", state.WarningConnect)
-	state.WarningRoundtrip = getFloat("warning_roundtrip", state.WarningRoundtrip)
-	state.CriticalThroughput = getFloat("critical_throughput", state.CriticalThroughput)
-	state.CriticalConnect = getFloat("critical_connect", state.CriticalConnect)
-	state.CriticalRoundtrip = getFloat("critical_roundtrip", state.CriticalRoundtrip)
-	state.Protocol = getString("protocol", state.Protocol)
-	state.ValidityWarning = getInt("validity_warning", state.ValidityWarning)
-	state.ValidityCritical = getInt("validity_critical", state.ValidityCritical)
-	state.ExpectedIP1 = getString("expected_ip1", state.ExpectedIP1)
-	state.ResponseWarning = getInt("response_warning", state.ResponseWarning)
-	state.ResponseCritical = getInt("response_critial", state.ResponseCritical) // API uses this spelling (typo in API)
-	state.DNSName = getString("dns_name", state.DNSName)
-	state.SmtpPort = getInt("smtp_port", state.SmtpPort)
-	state.Sender = getString("sender", state.Sender)
-	state.Recipient = getString("recipient", state.Recipient)
-	state.PopType = getString("pop_type", state.PopType)
-	state.PopHost = getString("pop_host", state.PopHost)
-	state.PopUser = getString("pop_user", state.PopUser)
-	state.PopPassword = getString("pop_password", state.PopPassword)
-	state.DeleteMode = getString("delete_mode", state.DeleteMode)
-	state.TimeWarning = getInt("time_warning", state.TimeWarning)
-	state.TimeCritical = getInt("time_critical", state.TimeCritical)
-	state.Username = getString("username", state.Username)
-	state.Password = getString("password", state.Password)
-	state.Database = getString("database", state.Database)
-	state.SQLQuery = getString("sql_query", state.SQLQuery)
-	state.MongoConnection = getString("connection", state.MongoConnection)
-	state.SearchItemOk = getString("searchitem_ok", state.SearchItemOk)
-	state.SearchItemCritical = getString("searchitem_critical", state.SearchItemCritical)
-	state.SearchItemNone = getBool("searchitem_none", state.SearchItemNone)
-	state.Command = getString("command", state.Command)
-	state.Cron = getString("cron", state.Cron)
-	state.Timezone = getString("timezone", state.Timezone)
-	state.Token = getString("token", state.Token)
-	state.TransactionID = getString("transaction_id", state.TransactionID)
-	state.Definition = getString("definition", state.Definition)
-	state.Language = getString("language", state.Language)
-	state.PortRange = getString("port_range", state.PortRange)
-	state.PortscanNone = getBool("portscan_none", state.PortscanNone)
+
+	// Type-specific parameters into the params block
+	if state.Params == nil {
+		state.Params = &CheckParamsModel{}
+	}
+	p := state.Params
+	p.Path = getString("path", p.Path)
+	p.Timeout = getInt("timeout", p.Timeout)
+	p.Port = getInt("port", p.Port)
+	p.Ssl = getBool("ssl", p.Ssl)
+	if v, ok := raw["ssl_version"].(float64); ok {
+		_, idToName := sslVersionMaps(state.Type.ValueString())
+		if name, found := idToName[int64(v)]; found {
+			p.SslVersion = types.StringValue(name)
+		} else {
+			p.SslVersion = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.CheckCert = getBool("check_cert", p.CheckCert)
+	if v, ok := raw["auth_type"].(string); ok {
+		if name, found := authTypeByCode[v]; found {
+			p.AuthType = types.StringValue(name)
+		} else {
+			p.AuthType = types.StringValue(v)
+		}
+	}
+	p.Login = getString("login", p.Login)
+	p.Password = getString("password", p.Password)
+	p.Username = getString("username", p.Username)
+	p.Useragent = getString("useragent", p.Useragent)
+	p.HostHeader = getString("host_header", p.HostHeader)
+	p.Searchitem = getString("searchitem", p.Searchitem)
+	p.Method = getString("method", p.Method)
+	p.Postvars = getString("postvars", p.Postvars)
+	p.Regex = getString("regex", p.Regex)
+	p.InvertRegex = getBool("invert-regex", p.InvertRegex)
+	p.HeaderRegex = getString("header-regex", p.HeaderRegex)
+	p.MinSize = getInt("min_size", p.MinSize)
+	p.MaxSize = getInt("max_size", p.MaxSize)
+	p.Addheader1 = getString("addheader1", p.Addheader1)
+	p.Addheader2 = getString("addheader2", p.Addheader2)
+	p.Addheader3 = getString("addheader3", p.Addheader3)
+	p.ContentType = getString("content_type", p.ContentType)
+	p.StatusCode = getInt("status_code", p.StatusCode)
+	p.Redirect = getBool("redirect", p.Redirect)
+	p.WarningThroughput = getFloat("warning_throughput", p.WarningThroughput)
+	p.WarningConnect = getFloat("warning_connect", p.WarningConnect)
+	p.WarningRoundtrip = getFloat("warning_roundtrip", p.WarningRoundtrip)
+	p.CriticalThroughput = getFloat("critical_throughput", p.CriticalThroughput)
+	p.CriticalConnect = getFloat("critical_connect", p.CriticalConnect)
+	p.CriticalRoundtrip = getFloat("critical_roundtrip", p.CriticalRoundtrip)
+	if v, ok := raw["performance_none"].(float64); ok {
+		if name, found := performanceNoneByID[int64(v)]; found {
+			p.PerformanceNone = types.StringValue(name)
+		} else {
+			p.PerformanceNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.Protocol = getString("protocol", p.Protocol)
+	p.ValidityWarning = getInt("validity_warning", p.ValidityWarning)
+	p.ValidityCritical = getInt("validity_critical", p.ValidityCritical)
+	p.DifferentIP = getString("different_ip", p.DifferentIP)
+	p.ExpectedIP1 = getString("expected_ip1", p.ExpectedIP1)
+	p.ExpectedIP2 = getString("expected_ip2", p.ExpectedIP2)
+	p.ExpectedIP3 = getString("expected_ip3", p.ExpectedIP3)
+	p.ExpectedIP4 = getString("expected_ip4", p.ExpectedIP4)
+	p.ExpectedIPLink = getString("expected_iplink", p.ExpectedIPLink)
+	p.DnsServer = getString("dns_server", p.DnsServer)
+	p.DnsRecord = getString("dns_record", p.DnsRecord)
+	p.DnsAuth = getString("dns_auth", p.DnsAuth)
+	p.ResponseWarning = getInt("response_warning", p.ResponseWarning)
+	p.ResponseCritical = getInt("response_critial", p.ResponseCritical) // API uses this spelling (typo in API)
+	p.DNSName = getString("dns_name", p.DNSName)
+	p.From = getString("from", p.From)
+	p.SmtpPort = getInt("smtp_port", p.SmtpPort)
+	p.Sender = getString("sender", p.Sender)
+	p.Recipient = getString("recipient", p.Recipient)
+	if v, ok := raw["pop_type"].(float64); ok {
+		if name, found := popTypeByID[int64(v)]; found {
+			p.PopType = types.StringValue(name)
+		} else {
+			p.PopType = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.PopHost = getString("pop_host", p.PopHost)
+	p.PopUser = getString("pop_user", p.PopUser)
+	p.PopPassword = getString("pop_password", p.PopPassword)
+	if v, ok := raw["delete_mode"].(float64); ok {
+		if name, found := deleteModeByID[int64(v)]; found {
+			p.DeleteMode = types.StringValue(name)
+		} else {
+			p.DeleteMode = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.TimeWarning = getInt("time_warning", p.TimeWarning)
+	p.TimeCritical = getInt("time_critical", p.TimeCritical)
+	p.SmtpUser = getString("smtp_user", p.SmtpUser)
+	p.SmtpPassword = getString("smtp_password", p.SmtpPassword)
+	p.SmtpTls = getBool("smtp_tls", p.SmtpTls)
+	p.SmtpHeader1 = getString("smtp_header1", p.SmtpHeader1)
+	p.Database = getString("database", p.Database)
+	p.SQLQuery = getString("sql_query", p.SQLQuery)
+	if v, ok := raw["connection"].(float64); ok {
+		if name, found := mongoConnectionByID[int64(v)]; found {
+			p.MongoConnection = types.StringValue(name)
+		} else {
+			p.MongoConnection = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.SearchItemOk = getString("searchitem_ok", p.SearchItemOk)
+	p.SearchItemWarning = getString("searchitem_warning", p.SearchItemWarning)
+	p.SearchItemCritical = getString("searchitem_critical", p.SearchItemCritical)
+	if v, ok := raw["searchitem_none"].(float64); ok {
+		if name, found := searchItemNoneByID[int64(v)]; found {
+			p.SearchItemNone = types.StringValue(name)
+		} else {
+			p.SearchItemNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.BasicauthLogin = getString("basicauth_login", p.BasicauthLogin)
+	p.BasicauthPassword = getString("basicauth_password", p.BasicauthPassword)
+	p.DebugAddon = getString("debug_addon", p.DebugAddon)
+	p.Command = getString("cmd", p.Command)
+	p.Token = getString("token", p.Token)
+	p.Silent = getInt("silent", p.Silent)
+	p.Cron = getString("cron", p.Cron)
+	p.Timezone = getString("timezone", p.Timezone)
+	p.Def = getString("def", p.Def)
+	p.Performance = getBool("performance", p.Performance)
+	p.PerformanceName = getString("performance_name", p.PerformanceName)
+	p.PerformanceRegex = getString("performance_regex", p.PerformanceRegex)
+	p.PerformanceUnit = getString("performance_unit", p.PerformanceUnit)
+	p.PerformanceDigits = getInt("performance_digits", p.PerformanceDigits)
+	p.TransactionID = getString("transaction_id", p.TransactionID)
+	p.Definition = getString("definition", p.Definition)
+	p.Language = getString("language", p.Language)
+	p.SuiteFilter = getString("suite_filter", p.SuiteFilter)
+	p.PortRange = getString("port_range", p.PortRange)
+	if v, ok := raw["portscan_none"].(float64); ok {
+		if name, found := portscanNoneByID[int64(v)]; found {
+			p.PortscanNone = types.StringValue(name)
+		} else {
+			p.PortscanNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
+		}
+	}
+	p.OpenPorts = getString("open_ports", p.OpenPorts)
+
+	// If all params are null (e.g. blacklist type), set params to nil
+	// to avoid an empty params block in state.
+	allNull := true
+	for _, pc := range paramsSetFields(p) {
+		if pc.isSet {
+			allNull = false
+			break
+		}
+	}
+	if allNull {
+		state.Params = nil
+	}
 }
 
 // applyMonitoring calls service_monitoring to enable or disable check execution.

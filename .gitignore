@@ -11,3 +11,12 @@ terraform-provider-serverguard24
 
 # GoReleaser output
 dist/
+
+# Other locations to ignore
+.envrc
+.secrets
+.DS_Store
+api-docs/
+
+# Manual acceptance-test state (created by 'make testacc-create')
+acc-manual-state.json

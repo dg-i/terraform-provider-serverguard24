@@ -22,7 +22,18 @@ test:
 	go test ./... -v -timeout 120s
 
 testacc:
-	TF_ACC=1 go test ./... -v -run "^TestAcc" -timeout 120s
+	TF_ACC=1 go test ./internal/acceptance/... -v -run "^TestAcc" -timeout 300s
+
+# testacc-create creates resources via the API and writes their IDs to
+# acc-manual-state.json so they can be inspected in the Serverguard24 UI.
+# testacc-destroy reads that file and deletes the resources.
+testacc-create:
+	TF_ACC=1 SG24_TEST_MODE=create SG24_TEST_STATEFILE=$(shell pwd)/acc-manual-state.json \
+	  go test ./internal/acceptance/... -v -run "^TestAccManual_Create$$" -timeout 60s
+
+testacc-destroy:
+	TF_ACC=1 SG24_TEST_MODE=destroy SG24_TEST_STATEFILE=$(shell pwd)/acc-manual-state.json \
+	  go test ./internal/acceptance/... -v -run "^TestAccManual_Destroy$$" -timeout 60s
 
 lint:
 	golangci-lint run ./...
@@ -33,4 +44,4 @@ generate:
 tidy:
 	go mod tidy
 
-.PHONY: build install test testacc lint generate tidy
+.PHONY: build install test testacc testacc-create testacc-destroy lint generate tidy

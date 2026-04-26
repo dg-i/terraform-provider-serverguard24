@@ -35,6 +35,22 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
+# GPG signing is required by the Terraform Registry.
+# Prerequisites:
+#   1. Generate a GPG key pair and export the private key.
+#   2. Add GPG_PRIVATE_KEY and PASSPHRASE as GitHub Actions secrets.
+#   3. Register the public key fingerprint at registry.terraform.io.
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
 release:
   extra_files:
     - glob: "terraform-registry-manifest.json"
