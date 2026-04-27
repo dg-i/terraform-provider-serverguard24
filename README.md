@@ -5,7 +5,7 @@ This Terraform provider enables managing [Serverguard24](https://www.serverguard
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.21 (for building from source)
+- [Go](https://golang.org/doc/install) >= 1.26.2 (for building from source)
 - A Serverguard24 account with API access
 
 ## Building the Provider

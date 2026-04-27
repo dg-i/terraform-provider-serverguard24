@@ -10,9 +10,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
@@ -26,6 +28,41 @@ var downtimeTypeByName = map[string]int64{
 
 var _ resource.Resource = &DowntimeResource{}
 var _ resource.ResourceWithImportState = &DowntimeResource{}
+
+type numericStringListValidator struct{}
+
+func (v numericStringListValidator) Description(_ context.Context) string {
+	return "all elements must be positive numeric IDs"
+}
+
+func (v numericStringListValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v numericStringListValidator) ValidateList(ctx context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	var elems []types.String
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &elems, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	for i, elem := range elems {
+		if elem.IsNull() || elem.IsUnknown() {
+			continue
+		}
+		if _, err := parsePositiveID(elem.ValueString(), req.Path.String()); err != nil {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtListIndex(i),
+				"Invalid ID",
+				err.Error(),
+			)
+		}
+	}
+}
 
 type DowntimeResource struct {
 	client *client.Client
@@ -108,12 +145,16 @@ func (r *DowntimeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				ElementType:         types.StringType,
 				Description:         "List of check IDs (as strings) to suppress alerts for during this maintenance window.",
 				MarkdownDescription: "List of check IDs to suppress alerts for during this maintenance window. Accepts string IDs so you can reference `serverguard24_check.example.id` directly.",
+				Validators:          []validator.List{numericStringListValidator{}},
+				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
 			},
 			"hosts": schema.ListAttribute{
 				Optional:            true,
 				ElementType:         types.StringType,
 				Description:         "List of host IDs (as strings) to suppress alerts for during this maintenance window.",
 				MarkdownDescription: "List of host IDs to suppress alerts for during this maintenance window. Accepts string IDs so you can reference `serverguard24_host.example.id` directly.",
+				Validators:          []validator.List{numericStringListValidator{}},
+				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
 			},
 		},
 	}
@@ -198,25 +239,39 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// Link services and hosts in a single call each (API accepts arrays).
-	if !plan.Services.IsNull() && !plan.Services.IsUnknown() && len(stringListToInt64s(ctx, plan.Services)) > 0 {
-		if _, err := r.client.Do(client.Request{
-			"command":  "downtime_link",
-			"id":       plan.ID.ValueString(),
-			"services": stringListToInt64s(ctx, plan.Services),
-		}); err != nil {
-			resp.Diagnostics.AddError("Error linking services to downtime", err.Error())
+	if !plan.Services.IsNull() && !plan.Services.IsUnknown() {
+		services, invalid := stringListToInt64s(ctx, plan.Services)
+		if len(invalid) > 0 {
+			resp.Diagnostics.AddError("Invalid services", invalidIDMessage(invalid))
 			return
+		}
+		if len(services) > 0 {
+			if _, err := r.client.Do(client.Request{
+				"command":  "downtime_link",
+				"id":       plan.ID.ValueString(),
+				"services": services,
+			}); err != nil {
+				resp.Diagnostics.AddError("Error linking services to downtime", err.Error())
+				return
+			}
 		}
 	}
 
-	if !plan.Hosts.IsNull() && !plan.Hosts.IsUnknown() && len(stringListToInt64s(ctx, plan.Hosts)) > 0 {
-		if _, err := r.client.Do(client.Request{
-			"command": "downtime_link",
-			"id":      plan.ID.ValueString(),
-			"hosts":   stringListToInt64s(ctx, plan.Hosts),
-		}); err != nil {
-			resp.Diagnostics.AddError("Error linking hosts to downtime", err.Error())
+	if !plan.Hosts.IsNull() && !plan.Hosts.IsUnknown() {
+		hosts, invalid := stringListToInt64s(ctx, plan.Hosts)
+		if len(invalid) > 0 {
+			resp.Diagnostics.AddError("Invalid hosts", invalidIDMessage(invalid))
 			return
+		}
+		if len(hosts) > 0 {
+			if _, err := r.client.Do(client.Request{
+				"command": "downtime_link",
+				"id":      plan.ID.ValueString(),
+				"hosts":   hosts,
+			}); err != nil {
+				resp.Diagnostics.AddError("Error linking hosts to downtime", err.Error())
+				return
+			}
 		}
 	}
 
@@ -250,28 +305,41 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 
 	// Attempt to unlink services/hosts. The downtime record itself cannot be
 	// deleted via the API; Terraform removes it from state after this returns.
-	if !state.Services.IsNull() && len(stringListToInt64s(ctx, state.Services)) > 0 {
-		if _, err := r.client.Do(client.Request{
-			"command":  "downtime_unlink",
-			"id":       state.ID.ValueString(),
-			"services": stringListToInt64s(ctx, state.Services),
-		}); err != nil {
-			resp.Diagnostics.AddWarning(
-				"Failed to unlink services from downtime",
-				fmt.Sprintf("%s — the links may persist in Serverguard24.", err),
-			)
+	if !state.Services.IsNull() && !state.Services.IsUnknown() {
+		services, invalid := stringListToInt64s(ctx, state.Services)
+		if len(invalid) > 0 {
+			resp.Diagnostics.AddWarning("Invalid services in state", invalidIDMessage(invalid))
+		}
+		if len(services) > 0 {
+			if _, err := r.client.Do(client.Request{
+				"command":  "downtime_unlink",
+				"id":       state.ID.ValueString(),
+				"services": services,
+			}); err != nil {
+				resp.Diagnostics.AddWarning(
+					"Failed to unlink services from downtime",
+					fmt.Sprintf("%s — the links may persist in Serverguard24.", err),
+				)
+			}
 		}
 	}
-	if !state.Hosts.IsNull() && len(stringListToInt64s(ctx, state.Hosts)) > 0 {
-		if _, err := r.client.Do(client.Request{
-			"command": "downtime_unlink",
-			"id":      state.ID.ValueString(),
-			"hosts":   stringListToInt64s(ctx, state.Hosts),
-		}); err != nil {
-			resp.Diagnostics.AddWarning(
-				"Failed to unlink hosts from downtime",
-				fmt.Sprintf("%s — the links may persist in Serverguard24.", err),
-			)
+
+	if !state.Hosts.IsNull() && !state.Hosts.IsUnknown() {
+		hosts, invalid := stringListToInt64s(ctx, state.Hosts)
+		if len(invalid) > 0 {
+			resp.Diagnostics.AddWarning("Invalid hosts in state", invalidIDMessage(invalid))
+		}
+		if len(hosts) > 0 {
+			if _, err := r.client.Do(client.Request{
+				"command": "downtime_unlink",
+				"id":      state.ID.ValueString(),
+				"hosts":   hosts,
+			}); err != nil {
+				resp.Diagnostics.AddWarning(
+					"Failed to unlink hosts from downtime",
+					fmt.Sprintf("%s — the links may persist in Serverguard24.", err),
+				)
+			}
 		}
 	}
 }
@@ -299,18 +367,28 @@ func emptyList() types.List {
 }
 
 // stringListToInt64s converts a types.List of strings to []int64 for API calls.
-// Non-numeric entries are silently skipped.
-func stringListToInt64s(ctx context.Context, l types.List) []int64 {
+// Invalid entries are returned separately so callers can reject or warn.
+func stringListToInt64s(ctx context.Context, l types.List) ([]int64, []string) {
 	var elems []types.String
 	l.ElementsAs(ctx, &elems, false)
 	out := make([]int64, 0, len(elems))
+	invalid := make([]string, 0)
 	for _, e := range elems {
-		var v int64
-		if _, err := fmt.Sscanf(e.ValueString(), "%d", &v); err == nil {
-			out = append(out, v)
+		if e.IsNull() || e.IsUnknown() {
+			continue
 		}
+		v, err := parsePositiveID(e.ValueString(), "id")
+		if err != nil {
+			invalid = append(invalid, e.ValueString())
+			continue
+		}
+		out = append(out, v)
 	}
-	return out
+	return out, invalid
+}
+
+func invalidIDMessage(ids []string) string {
+	return fmt.Sprintf("All IDs must be positive numeric strings. Invalid values: %q", ids)
 }
 
 // parseRFC3339Unix parses an RFC 3339 timestamp string and returns its Unix epoch value.

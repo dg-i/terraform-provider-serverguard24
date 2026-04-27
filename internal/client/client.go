@@ -40,17 +40,24 @@ type Request map[string]interface{}
 
 // Response is a single response element returned by the API.
 // The API may return "code" as either a JSON string ("100") or a number (100).
-// The message field is named "message" in actual API responses (not "errmessage"
-// as stated in the API documentation).
+// Error messages may be returned as either "message" or "errmessage".
 type Response struct {
 	Code       json.RawMessage `json:"code"`
-	ErrMessage string          `json:"message"`
+	Message    string          `json:"message"`
+	ErrMessage string          `json:"errmessage"`
 	Data       json.RawMessage `json:"data"`
 }
 
 // codeString returns the code value as a plain string regardless of JSON type.
 func (r *Response) codeString() string {
 	return strings.Trim(string(r.Code), `"`)
+}
+
+func (r *Response) errorMessage() string {
+	if r.Message != "" {
+		return r.Message
+	}
+	return r.ErrMessage
 }
 
 // Do sends a single command to the API and returns the response.
@@ -82,7 +89,9 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
@@ -104,7 +113,7 @@ func (c *Client) Do(cmd Request) (*Response, error) {
 
 	r := &responses[0]
 	if r.codeString() != "100" {
-		return nil, fmt.Errorf("API error %s: %s", r.codeString(), r.ErrMessage)
+		return nil, fmt.Errorf("API error %s: %s", r.codeString(), r.errorMessage())
 	}
 
 	return r, nil
@@ -141,4 +150,3 @@ func IsAlreadyExists(err error) bool {
 	}
 	return strings.Contains(err.Error(), "API error 310")
 }
-

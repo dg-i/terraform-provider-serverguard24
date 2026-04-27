@@ -68,6 +68,11 @@ resource "serverguard24_check" "test" {
 // If the list is empty or the account has no permission, t.Skip() is called.
 func findFirstID(t *testing.T, command string, skipMsg string) string {
 	t.Helper()
+	if os.Getenv("TF_ACC") == "" {
+		t.Skip("Acceptance tests skipped unless env 'TF_ACC' set")
+	}
+	testAccPreCheck(t)
+
 	c := client.New(os.Getenv("SG24_API_TOKEN"), "test")
 	resp, err := c.Do(client.Request{"command": command})
 	if err != nil {

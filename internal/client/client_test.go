@@ -18,6 +18,16 @@ func apiResponse(code, errmessage string, data interface{}) []byte {
 	return raw
 }
 
+func apiResponseMessage(code, message string, data interface{}) []byte {
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	raw, _ := json.Marshal([]map[string]interface{}{
+		{"code": code, "message": message, "data": data},
+	})
+	return raw
+}
+
 func TestClient_Do_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -44,10 +54,10 @@ func TestClient_Do_Success(t *testing.T) {
 
 func TestClient_Do_ErrorCodes(t *testing.T) {
 	tests := []struct {
-		name       string
-		code       string
+		name         string
+		code         string
 		wantNotFound bool
-		wantPerm   bool
+		wantPerm     bool
 	}{
 		{"210 invalid param", "210", true, false},
 		{"220 auth failed", "220", false, true},
@@ -159,6 +169,36 @@ func TestClient_IsAlreadyExists(t *testing.T) {
 	}
 	if IsNotFound(err) {
 		t.Error("IsNotFound() should be false for 310")
+	}
+}
+
+func TestClient_Do_ErrorMessageFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{"message", apiResponseMessage("210", "message field", nil), "message field"},
+		{"errmessage", apiResponse("210", "errmessage field", nil), "errmessage field"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			c := NewWithEndpoint("token", "test", server.URL)
+			_, err := c.Do(Request{"command": "test"})
+			if err == nil {
+				t.Fatal("Do() expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.want)
+			}
+		})
 	}
 }
 

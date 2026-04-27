@@ -6,11 +6,11 @@ import (
 
 func TestParseLinkID(t *testing.T) {
 	tests := []struct {
-		name      string
-		id        string
-		wantA     string
-		wantB     string
-		wantDiag  bool
+		name     string
+		id       string
+		wantA    string
+		wantB    string
+		wantDiag bool
 	}{
 		{"valid simple", "123/456", "123", "456", false},
 		{"valid with spaces", " 123 / 456 ", "123", "456", false},
@@ -33,6 +33,35 @@ func TestParseLinkID(t *testing.T) {
 				if gotA != tt.wantA || gotB != tt.wantB {
 					t.Errorf("parseLinkID() = %q, %q, want %q, %q", gotA, gotB, tt.wantA, tt.wantB)
 				}
+			}
+		})
+	}
+}
+
+func TestParsePositiveID(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		want    int64
+		wantErr bool
+	}{
+		{"valid", "123", 123, false},
+		{"zero", "0", 0, true},
+		{"negative", "-1", 0, true},
+		{"empty", "", 0, true},
+		{"non numeric", "abc", 0, true},
+		{"with spaces", " 123 ", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePositiveID(tt.id, "id")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parsePositiveID() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("parsePositiveID() = %d, want %d", got, tt.want)
 			}
 		})
 	}

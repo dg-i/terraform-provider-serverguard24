@@ -1,4 +1,4 @@
-PLUGIN_DIR := $(HOME)/.terraform.d/plugins/registry.terraform.io/dg-i/serverguard24/0.1.0/$$(go env GOOS)_$$(go env GOARCH)
+PLUGIN_DIR := $(HOME)/.terraform.d/plugins/registry.terraform.io/dg-i/serverguard24/0.1.2/$$(go env GOOS)_$$(go env GOARCH)
 DEV_OVERRIDES_FILE := $(HOME)/.terraformrc
 
 default: build
