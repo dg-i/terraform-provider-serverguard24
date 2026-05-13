@@ -869,11 +869,13 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 	}
 
 	// Check that all required params for this type are present.
+	// Unknown values (e.g. from for_each expressions) are treated as potentially
+	// present — validation is deferred to apply time for those.
 	required := requiredParamsByType[typeName]
 	if len(required) > 0 {
 		setMap := make(map[string]bool, len(paramsSetFields(config.Params)))
 		for _, pc := range paramsSetFields(config.Params) {
-			if pc.isSet {
+			if pc.isSet || pc.unknown {
 				setMap[pc.name] = true
 			}
 		}
@@ -942,56 +944,61 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 }
 
 type paramCheck struct {
-	name  string
-	isSet bool
+	name    string
+	isSet   bool
+	unknown bool
 }
 
 func isSet(v interface{ IsNull() bool; IsUnknown() bool }) bool {
 	return !v.IsNull() && !v.IsUnknown()
 }
 
+func paramField(name string, v interface{ IsNull() bool; IsUnknown() bool }) paramCheck {
+	return paramCheck{name: name, isSet: isSet(v), unknown: v.IsUnknown()}
+}
+
 func paramsSetFields(p *CheckParamsModel) []paramCheck {
 	return []paramCheck{
-		{"path", isSet(p.Path)}, {"timeout", isSet(p.Timeout)}, {"port", isSet(p.Port)},
-		{"ssl", isSet(p.Ssl)}, {"ssl_version", isSet(p.SslVersion)}, {"check_cert", isSet(p.CheckCert)},
-		{"auth_type", isSet(p.AuthType)}, {"login", isSet(p.Login)}, {"password", isSet(p.Password)},
-		{"username", isSet(p.Username)}, {"useragent", isSet(p.Useragent)}, {"host_header", isSet(p.HostHeader)},
-		{"searchitem", isSet(p.Searchitem)}, {"method", isSet(p.Method)}, {"postvars", isSet(p.Postvars)},
-		{"regex", isSet(p.Regex)}, {"invert_regex", isSet(p.InvertRegex)}, {"header_regex", isSet(p.HeaderRegex)},
-		{"min_size", isSet(p.MinSize)}, {"max_size", isSet(p.MaxSize)},
-		{"addheader1", isSet(p.Addheader1)}, {"addheader2", isSet(p.Addheader2)}, {"addheader3", isSet(p.Addheader3)},
-		{"content_type", isSet(p.ContentType)}, {"status_code", isSet(p.StatusCode)}, {"redirect", isSet(p.Redirect)},
-		{"warning_throughput", isSet(p.WarningThroughput)}, {"warning_connect", isSet(p.WarningConnect)},
-		{"warning_roundtrip", isSet(p.WarningRoundtrip)}, {"critical_throughput", isSet(p.CriticalThroughput)},
-		{"critical_connect", isSet(p.CriticalConnect)}, {"critical_roundtrip", isSet(p.CriticalRoundtrip)},
-		{"performance_none", isSet(p.PerformanceNone)},
-		{"protocol", isSet(p.Protocol)}, {"validity_warning", isSet(p.ValidityWarning)},
-		{"validity_critical", isSet(p.ValidityCritical)}, {"different_ip", isSet(p.DifferentIP)},
-		{"expected_ip1", isSet(p.ExpectedIP1)}, {"expected_ip2", isSet(p.ExpectedIP2)},
-		{"expected_ip3", isSet(p.ExpectedIP3)}, {"expected_ip4", isSet(p.ExpectedIP4)},
-		{"expected_iplink", isSet(p.ExpectedIPLink)}, {"dns_server", isSet(p.DnsServer)},
-		{"dns_record", isSet(p.DnsRecord)}, {"dns_auth", isSet(p.DnsAuth)},
-		{"response_warning", isSet(p.ResponseWarning)}, {"response_critical", isSet(p.ResponseCritical)},
-		{"dns_name", isSet(p.DNSName)}, {"from", isSet(p.From)},
-		{"smtp_port", isSet(p.SmtpPort)}, {"sender", isSet(p.Sender)}, {"recipient", isSet(p.Recipient)},
-		{"pop_type", isSet(p.PopType)}, {"pop_host", isSet(p.PopHost)}, {"pop_user", isSet(p.PopUser)},
-		{"pop_password", isSet(p.PopPassword)}, {"delete_mode", isSet(p.DeleteMode)},
-		{"time_warning", isSet(p.TimeWarning)}, {"time_critical", isSet(p.TimeCritical)},
-		{"smtp_user", isSet(p.SmtpUser)}, {"smtp_password", isSet(p.SmtpPassword)},
-		{"smtp_tls", isSet(p.SmtpTls)}, {"smtp_header1", isSet(p.SmtpHeader1)},
-		{"database", isSet(p.Database)}, {"sql_query", isSet(p.SQLQuery)}, {"mongo_connection", isSet(p.MongoConnection)},
-		{"searchitem_ok", isSet(p.SearchItemOk)}, {"searchitem_warning", isSet(p.SearchItemWarning)},
-		{"searchitem_critical", isSet(p.SearchItemCritical)}, {"searchitem_none", isSet(p.SearchItemNone)},
-		{"basicauth_login", isSet(p.BasicauthLogin)}, {"basicauth_password", isSet(p.BasicauthPassword)},
-		{"debug_addon", isSet(p.DebugAddon)},
-		{"command", isSet(p.Command)}, {"token", isSet(p.Token)}, {"silent", isSet(p.Silent)},
-		{"cron", isSet(p.Cron)}, {"timezone", isSet(p.Timezone)}, {"def", isSet(p.Def)},
-		{"performance", isSet(p.Performance)}, {"performance_name", isSet(p.PerformanceName)},
-		{"performance_regex", isSet(p.PerformanceRegex)}, {"performance_unit", isSet(p.PerformanceUnit)},
-		{"performance_digits", isSet(p.PerformanceDigits)},
-		{"transaction_id", isSet(p.TransactionID)}, {"definition", isSet(p.Definition)},
-		{"language", isSet(p.Language)}, {"suite_filter", isSet(p.SuiteFilter)},
-		{"port_range", isSet(p.PortRange)}, {"portscan_none", isSet(p.PortscanNone)}, {"open_ports", isSet(p.OpenPorts)},
+		paramField("path", p.Path), paramField("timeout", p.Timeout), paramField("port", p.Port),
+		paramField("ssl", p.Ssl), paramField("ssl_version", p.SslVersion), paramField("check_cert", p.CheckCert),
+		paramField("auth_type", p.AuthType), paramField("login", p.Login), paramField("password", p.Password),
+		paramField("username", p.Username), paramField("useragent", p.Useragent), paramField("host_header", p.HostHeader),
+		paramField("searchitem", p.Searchitem), paramField("method", p.Method), paramField("postvars", p.Postvars),
+		paramField("regex", p.Regex), paramField("invert_regex", p.InvertRegex), paramField("header_regex", p.HeaderRegex),
+		paramField("min_size", p.MinSize), paramField("max_size", p.MaxSize),
+		paramField("addheader1", p.Addheader1), paramField("addheader2", p.Addheader2), paramField("addheader3", p.Addheader3),
+		paramField("content_type", p.ContentType), paramField("status_code", p.StatusCode), paramField("redirect", p.Redirect),
+		paramField("warning_throughput", p.WarningThroughput), paramField("warning_connect", p.WarningConnect),
+		paramField("warning_roundtrip", p.WarningRoundtrip), paramField("critical_throughput", p.CriticalThroughput),
+		paramField("critical_connect", p.CriticalConnect), paramField("critical_roundtrip", p.CriticalRoundtrip),
+		paramField("performance_none", p.PerformanceNone),
+		paramField("protocol", p.Protocol), paramField("validity_warning", p.ValidityWarning),
+		paramField("validity_critical", p.ValidityCritical), paramField("different_ip", p.DifferentIP),
+		paramField("expected_ip1", p.ExpectedIP1), paramField("expected_ip2", p.ExpectedIP2),
+		paramField("expected_ip3", p.ExpectedIP3), paramField("expected_ip4", p.ExpectedIP4),
+		paramField("expected_iplink", p.ExpectedIPLink), paramField("dns_server", p.DnsServer),
+		paramField("dns_record", p.DnsRecord), paramField("dns_auth", p.DnsAuth),
+		paramField("response_warning", p.ResponseWarning), paramField("response_critical", p.ResponseCritical),
+		paramField("dns_name", p.DNSName), paramField("from", p.From),
+		paramField("smtp_port", p.SmtpPort), paramField("sender", p.Sender), paramField("recipient", p.Recipient),
+		paramField("pop_type", p.PopType), paramField("pop_host", p.PopHost), paramField("pop_user", p.PopUser),
+		paramField("pop_password", p.PopPassword), paramField("delete_mode", p.DeleteMode),
+		paramField("time_warning", p.TimeWarning), paramField("time_critical", p.TimeCritical),
+		paramField("smtp_user", p.SmtpUser), paramField("smtp_password", p.SmtpPassword),
+		paramField("smtp_tls", p.SmtpTls), paramField("smtp_header1", p.SmtpHeader1),
+		paramField("database", p.Database), paramField("sql_query", p.SQLQuery), paramField("mongo_connection", p.MongoConnection),
+		paramField("searchitem_ok", p.SearchItemOk), paramField("searchitem_warning", p.SearchItemWarning),
+		paramField("searchitem_critical", p.SearchItemCritical), paramField("searchitem_none", p.SearchItemNone),
+		paramField("basicauth_login", p.BasicauthLogin), paramField("basicauth_password", p.BasicauthPassword),
+		paramField("debug_addon", p.DebugAddon),
+		paramField("command", p.Command), paramField("token", p.Token), paramField("silent", p.Silent),
+		paramField("cron", p.Cron), paramField("timezone", p.Timezone), paramField("def", p.Def),
+		paramField("performance", p.Performance), paramField("performance_name", p.PerformanceName),
+		paramField("performance_regex", p.PerformanceRegex), paramField("performance_unit", p.PerformanceUnit),
+		paramField("performance_digits", p.PerformanceDigits),
+		paramField("transaction_id", p.TransactionID), paramField("definition", p.Definition),
+		paramField("language", p.Language), paramField("suite_filter", p.SuiteFilter),
+		paramField("port_range", p.PortRange), paramField("portscan_none", p.PortscanNone), paramField("open_ports", p.OpenPorts),
 	}
 }
 
