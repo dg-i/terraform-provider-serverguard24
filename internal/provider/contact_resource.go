@@ -1,10 +1,11 @@
-package resources
+package provider
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -16,6 +17,7 @@ import (
 
 var _ resource.Resource = &ContactResource{}
 var _ resource.ResourceWithImportState = &ContactResource{}
+var _ resource.ResourceWithModifyPlan = &ContactResource{}
 
 type ContactResource struct {
 	client *client.Client
@@ -114,11 +116,12 @@ func (r *ContactResource) Create(ctx context.Context, req resource.CreateRequest
 		cmd["standard"] = boolToInt(plan.Standard.ValueBool())
 	}
 
-	apiResp, err := r.client.Do(cmd)
+	apiResp, err := r.client.Do(ctx, cmd)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating contact", err.Error())
 		return
 	}
+	r.client.InvalidateContacts()
 
 	var data struct {
 		ID json.Number `json:"id"`
@@ -139,10 +142,7 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	apiResp, err := r.client.Do(client.Request{
-		"command": "get_contacts",
-		"id":      state.ID.ValueString(),
-	})
+	apiResp, err := r.client.ListContacts(ctx)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -221,10 +221,11 @@ func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest
 		cmd["standard"] = boolToInt(plan.Standard.ValueBool())
 	}
 
-	if _, err := r.client.Do(cmd); err != nil {
+	if _, err := r.client.Do(ctx, cmd); err != nil {
 		resp.Diagnostics.AddError("Error updating contact", err.Error())
 		return
 	}
+	r.client.InvalidateContacts()
 
 	plan.ID = state.ID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -237,18 +238,39 @@ func (r *ContactResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	if _, err := r.client.Do(client.Request{
+	if _, err := r.client.Do(ctx, client.Request{
 		"command": "contact_delete",
 		"id":      state.ID.ValueString(),
 	}); err != nil {
 		resp.Diagnostics.AddError("Error deleting contact", err.Error())
+		return
 	}
+	r.client.InvalidateContacts()
 }
 
 func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.Set(ctx, ContactResourceModel{
 		ID: types.StringValue(req.ID),
 	})...)
+}
+
+// ModifyPlan warns when the user tries to clear an optional string or toggle
+// `standard` off; the Serverguard24 contact_edit API silently ignores both
+// operations.
+func (r *ContactResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var state, plan ContactResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	warnIfClearingString(&resp.Diagnostics, path.Root("email"), state.Email, plan.Email)
+	warnIfClearingString(&resp.Diagnostics, path.Root("mobile"), state.Mobile, plan.Mobile)
+	warnIfClearingString(&resp.Diagnostics, path.Root("network"), state.Network, plan.Network)
+	warnIfClearingBool(&resp.Diagnostics, path.Root("standard"), state.Standard, plan.Standard)
 }
 
 // helpers

@@ -1,4 +1,4 @@
-package resources
+package provider
 
 import (
 	"context"
@@ -97,11 +97,12 @@ func (r *HostResource) Create(ctx context.Context, req resource.CreateRequest, r
 		cmd["groups"] = listToInts(ctx, plan.Groups)
 	}
 
-	apiResp, err := r.client.Do(cmd)
+	apiResp, err := r.client.Do(ctx, cmd)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating host", err.Error())
 		return
 	}
+	r.client.InvalidateHosts()
 
 	var data struct {
 		ID json.Number `json:"id"`
@@ -122,10 +123,7 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	apiResp, err := r.client.Do(client.Request{
-		"command": "get_hosts",
-		"id":      state.ID.ValueString(),
-	})
+	apiResp, err := r.client.ListHosts(ctx)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -204,10 +202,11 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		cmd["groups"] = listToInts(ctx, plan.Groups)
 	}
 
-	if _, err := r.client.Do(cmd); err != nil {
+	if _, err := r.client.Do(ctx, cmd); err != nil {
 		resp.Diagnostics.AddError("Error updating host", err.Error())
 		return
 	}
+	r.client.InvalidateHosts()
 
 	plan.ID = state.ID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -220,12 +219,14 @@ func (r *HostResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	if _, err := r.client.Do(client.Request{
+	if _, err := r.client.Do(ctx, client.Request{
 		"command": "host_delete",
 		"id":      state.ID.ValueString(),
 	}); err != nil {
 		resp.Diagnostics.AddError("Error deleting host", err.Error())
+		return
 	}
+	r.client.InvalidateHosts()
 }
 
 func (r *HostResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

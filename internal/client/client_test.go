@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +38,7 @@ func TestClient_Do_Success(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("test-token", "test", server.URL)
-	resp, err := c.Do(Request{"command": "get_hosts"})
+	resp, err := c.Do(context.Background(), Request{"command": "get_hosts"})
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
 	}
@@ -73,7 +74,7 @@ func TestClient_Do_ErrorCodes(t *testing.T) {
 			defer server.Close()
 
 			c := NewWithEndpoint("token", "test", server.URL)
-			_, err := c.Do(Request{"command": "test"})
+			_, err := c.Do(context.Background(), Request{"command": "test"})
 			if err == nil {
 				t.Fatal("Do() expected error")
 			}
@@ -96,7 +97,7 @@ func TestClient_Do_EmptyResponse(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("token", "test", server.URL)
-	_, err := c.Do(Request{"command": "test"})
+	_, err := c.Do(context.Background(), Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for empty response")
 	}
@@ -111,7 +112,7 @@ func TestClient_Do_InvalidJSON(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("token", "test", server.URL)
-	_, err := c.Do(Request{"command": "test"})
+	_, err := c.Do(context.Background(), Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for invalid JSON")
 	}
@@ -129,7 +130,7 @@ func TestClient_Do_UserAgent(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("token", "1.2.3", server.URL)
-	_, _ = c.Do(Request{"command": "test"})
+	_, _ = c.Do(context.Background(), Request{"command": "test"})
 }
 
 func TestClient_Do_TokenInBody(t *testing.T) {
@@ -149,7 +150,7 @@ func TestClient_Do_TokenInBody(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("my-secret-token", "test", server.URL)
-	_, _ = c.Do(Request{"command": "test"})
+	_, _ = c.Do(context.Background(), Request{"command": "test"})
 }
 
 func TestClient_IsAlreadyExists(t *testing.T) {
@@ -160,7 +161,7 @@ func TestClient_IsAlreadyExists(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("token", "test", server.URL)
-	_, err := c.Do(Request{"command": "test"})
+	_, err := c.Do(context.Background(), Request{"command": "test"})
 	if err == nil {
 		t.Fatal("expected error for 310")
 	}
@@ -191,7 +192,7 @@ func TestClient_Do_ErrorMessageFields(t *testing.T) {
 			defer server.Close()
 
 			c := NewWithEndpoint("token", "test", server.URL)
-			_, err := c.Do(Request{"command": "test"})
+			_, err := c.Do(context.Background(), Request{"command": "test"})
 			if err == nil {
 				t.Fatal("Do() expected error")
 			}
@@ -209,7 +210,7 @@ func TestClient_Do_Non200(t *testing.T) {
 	defer server.Close()
 
 	c := NewWithEndpoint("token", "test", server.URL)
-	_, err := c.Do(Request{"command": "test"})
+	_, err := c.Do(context.Background(), Request{"command": "test"})
 	if err == nil {
 		t.Fatal("Do() expected error for non-200 status")
 	}

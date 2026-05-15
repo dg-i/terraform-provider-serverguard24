@@ -3,11 +3,50 @@
 page_title: "serverguard24 Provider"
 description: |-
   Provider for managing Serverguard24 monitoring resources.
+  Known API limitations
+  The Serverguard24 JSON API has several asymmetries that affect Terraform semantics:
+  Boolean flags cannot be turned off via update. Notification flags
+  (email_*, sms_*, push_*, http_*, phone_*), ipv6, and most
+  bool flags inside the params block (ssl, check_cert, redirect, smtp_tls,
+  …) are write-once. Toggling them from true to false in config has no
+  effect at apply time and produces a perpetual diff. The provider emits a
+  plan-time warning when it detects this case. Workaround: taint the resource
+  to force recreation, or change the value in the Serverguard24 dashboard.String fields cannot be cleared via update. Setting an optional string
+  attribute to null or omitting it after a value was previously stored will
+  leave the old value in place. Same workaround.Maintenance windows (serverguard24_downtime) cannot be edited or deleted
+  via API. Every attribute uses ForceNew and the resource is destroyed +
+  recreated on change.Read endpoints ignore the ID filter. get_hosts/get_contacts return
+  the full account; the provider filters client-side. Refresh performance is
+  O(N×M) for accounts with many resources.Error code 210 is overloaded. It means both "invalid parameter" and
+  "resource not found". The provider treats it conservatively as "gone".
 ---
 
 # serverguard24 Provider
 
 Provider for managing Serverguard24 monitoring resources.
+
+## Known API limitations
+
+The Serverguard24 JSON API has several asymmetries that affect Terraform semantics:
+
+- **Boolean flags cannot be turned off via update.** Notification flags
+  (`email_*`, `sms_*`, `push_*`, `http_*`, `phone_*`), `ipv6`, and most
+  bool flags inside the `params` block (`ssl`, `check_cert`, `redirect`, `smtp_tls`,
+  …) are write-once. Toggling them from `true` to `false` in config has no
+  effect at apply time and produces a perpetual diff. The provider emits a
+  plan-time warning when it detects this case. Workaround: taint the resource
+  to force recreation, or change the value in the Serverguard24 dashboard.
+- **String fields cannot be cleared via update.** Setting an optional string
+  attribute to `null` or omitting it after a value was previously stored will
+  leave the old value in place. Same workaround.
+- **Maintenance windows (`serverguard24_downtime`) cannot be edited or deleted
+  via API.** Every attribute uses `ForceNew` and the resource is destroyed +
+  recreated on change.
+- **Read endpoints ignore the ID filter.** `get_hosts`/`get_contacts` return
+  the full account; the provider filters client-side. Refresh performance is
+  O(N×M) for accounts with many resources.
+- **Error code 210 is overloaded.** It means both "invalid parameter" and
+  "resource not found". The provider treats it conservatively as "gone".
 
 ## Example Usage
 

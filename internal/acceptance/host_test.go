@@ -14,6 +14,7 @@ func TestAccHost_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckHostDestroy,
 		Steps: []resource.TestStep{
 			// Create and read
 			{

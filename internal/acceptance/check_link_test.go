@@ -74,7 +74,7 @@ func findFirstID(t *testing.T, command string, skipMsg string) string {
 	testAccPreCheck(t)
 
 	c := client.New(os.Getenv("SG24_API_TOKEN"), "test")
-	resp, err := c.Do(client.Request{"command": command})
+	resp, err := c.Do(t.Context(), client.Request{"command": command})
 	if err != nil {
 		if client.IsPermissionError(err) {
 			t.Skipf("%s: no permission — %v", skipMsg, err)
@@ -104,6 +104,7 @@ func TestAccCheckContactLink_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			// Create and verify attribute values.
 			{
@@ -170,6 +171,7 @@ resource "serverguard24_check_contact_link" "test" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			// Link to contact A.
 			{
@@ -212,6 +214,7 @@ func TestAccCheckDistributorLink_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			// Create the link and verify both the data source and the link resource.
 			{
@@ -263,6 +266,7 @@ func TestAccCheckIntegrationLink_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			// Create the link and verify both the data source and the link resource.
 			{

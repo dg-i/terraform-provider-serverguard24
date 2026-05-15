@@ -1,4 +1,4 @@
-package resources
+package provider
 
 import (
 	"context"
@@ -149,7 +149,7 @@ func (r *linkResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddAttributeError(path.Root(r.secondField), "Invalid "+r.secondField, err.Error())
 		return
 	}
-	if _, err := r.client.Do(client.Request{
+	if _, err := r.client.Do(ctx, client.Request{
 		"command":     r.linkCmd,
 		"id":          svcIDInt,
 		r.secondField: secondIDInt,
@@ -200,7 +200,7 @@ func (r *linkResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddAttributeError(path.Root(r.secondField), "Invalid "+r.secondField, err.Error())
 		return
 	}
-	if _, err := r.client.Do(client.Request{
+	if _, err := r.client.Do(ctx, client.Request{
 		"command":     r.unlinkCmd,
 		"id":          svcIDInt,
 		r.secondField: secondIDInt,

@@ -14,6 +14,7 @@ func TestAccCheck_http(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			// Create
 			{
@@ -85,6 +86,7 @@ func TestAccCheck_ping(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCheckDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig + fmt.Sprintf(`

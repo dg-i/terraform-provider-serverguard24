@@ -1,4 +1,4 @@
-package resources
+package provider
 
 import (
 	"context"
@@ -439,6 +439,7 @@ func (v checkTypeValidator) ValidateString(_ context.Context, req validator.Stri
 var _ resource.Resource = &CheckResource{}
 var _ resource.ResourceWithImportState = &CheckResource{}
 var _ resource.ResourceWithValidateConfig = &CheckResource{}
+var _ resource.ResourceWithModifyPlan = &CheckResource{}
 
 type CheckResource struct {
 	client *client.Client
@@ -943,6 +944,73 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 	}
 }
 
+// ModifyPlan warns when the user tries to clear an optional string or toggle a
+// notification flag off. The Serverguard24 service_edit API treats both cases
+// as no-ops, producing a perpetual diff. The active/notification fields are
+// handled by separate API calls (service_monitoring/service_notification) and
+// do not have this limitation.
+func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var state, plan CheckResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	warnIfClearingString(&resp.Diagnostics, path.Root("shortname"), state.Shortname, plan.Shortname)
+	warnIfClearingString(&resp.Diagnostics, path.Root("description"), state.Description, plan.Description)
+	warnIfClearingString(&resp.Diagnostics, path.Root("address"), state.Address, plan.Address)
+	warnIfClearingString(&resp.Diagnostics, path.Root("message"), state.Message, plan.Message)
+
+	warnIfClearingBool(&resp.Diagnostics, path.Root("ipv6"), state.IPv6, plan.IPv6)
+
+	type boolPair struct {
+		name        string
+		state, plan types.Bool
+	}
+	notificationPairs := []boolPair{
+		{"email_critical", state.EmailCritical, plan.EmailCritical},
+		{"email_warning", state.EmailWarning, plan.EmailWarning},
+		{"email_ok", state.EmailOk, plan.EmailOk},
+		{"email_remind", state.EmailRemind, plan.EmailRemind},
+		{"sms_critical", state.SmsCritical, plan.SmsCritical},
+		{"sms_warning", state.SmsWarning, plan.SmsWarning},
+		{"sms_ok", state.SmsOk, plan.SmsOk},
+		{"sms_remind", state.SmsRemind, plan.SmsRemind},
+		{"push_critical", state.PushCritical, plan.PushCritical},
+		{"push_warning", state.PushWarning, plan.PushWarning},
+		{"push_ok", state.PushOk, plan.PushOk},
+		{"push_remind", state.PushRemind, plan.PushRemind},
+		{"http_critical", state.HttpCritical, plan.HttpCritical},
+		{"http_warning", state.HttpWarning, plan.HttpWarning},
+		{"http_ok", state.HttpOk, plan.HttpOk},
+		{"http_remind", state.HttpRemind, plan.HttpRemind},
+		{"phone_critical", state.PhoneCritical, plan.PhoneCritical},
+		{"phone_warning", state.PhoneWarning, plan.PhoneWarning},
+		{"phone_ok", state.PhoneOk, plan.PhoneOk},
+		{"phone_remind", state.PhoneRemind, plan.PhoneRemind},
+	}
+	for _, pp := range notificationPairs {
+		warnIfClearingBool(&resp.Diagnostics, path.Root(pp.name), pp.state, pp.plan)
+	}
+
+	// Params block: warn for the bool flags and a handful of common strings that
+	// users commonly edit. The full param list is too large to enumerate here;
+	// see the provider docs for the general caveat.
+	if state.Params != nil && plan.Params != nil {
+		sp, pp := state.Params, plan.Params
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("ssl"), sp.Ssl, pp.Ssl)
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("check_cert"), sp.CheckCert, pp.CheckCert)
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("invert_regex"), sp.InvertRegex, pp.InvertRegex)
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("redirect"), sp.Redirect, pp.Redirect)
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("smtp_tls"), sp.SmtpTls, pp.SmtpTls)
+		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("performance"), sp.Performance, pp.Performance)
+	}
+}
+
 type paramCheck struct {
 	name    string
 	isSet   bool
@@ -1010,7 +1078,7 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	cmd := buildCheckCommand("service_add", "", plan)
-	apiResp, err := r.client.Do(cmd)
+	apiResp, err := r.client.Do(ctx, cmd)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating check", err.Error())
 		return
@@ -1026,11 +1094,11 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	plan.ID = types.StringValue(data.ID.String())
 
-	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Active); err != nil {
+	if err := r.applyMonitoring(ctx, plan.ID.ValueString(), plan.Active); err != nil {
 		resp.Diagnostics.AddError("Error setting active state", err.Error())
 		return
 	}
-	if err := r.applyNotification(plan.ID.ValueString(), plan.Notification); err != nil {
+	if err := r.applyNotification(ctx, plan.ID.ValueString(), plan.Notification); err != nil {
 		resp.Diagnostics.AddError("Error setting notification state", err.Error())
 		return
 	}
@@ -1041,8 +1109,8 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 // refreshFromAPI calls service_show and merges the API response into state.
 // Returns false if the resource no longer exists (caller should remove from state).
 // host_id is preserved from the existing state since service_show does not return it.
-func (r *CheckResource) refreshFromAPI(id string, state *CheckResourceModel) (found bool, err error) {
-	apiResp, err := r.client.Do(client.Request{
+func (r *CheckResource) refreshFromAPI(ctx context.Context, id string, state *CheckResourceModel) (found bool, err error) {
+	apiResp, err := r.client.Do(ctx, client.Request{
 		"command": "service_show",
 		"id":      id,
 	})
@@ -1081,7 +1149,7 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	found, err := r.refreshFromAPI(state.ID.ValueString(), &state)
+	found, err := r.refreshFromAPI(ctx, state.ID.ValueString(), &state)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading check", err.Error())
 		return
@@ -1108,20 +1176,27 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	cmd := buildCheckCommand("service_edit", state.ID.ValueString(), plan)
-	if _, err := r.client.Do(cmd); err != nil {
+	if _, err := r.client.Do(ctx, cmd); err != nil {
 		resp.Diagnostics.AddError("Error updating check", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
 
-	if err := r.applyMonitoring(plan.ID.ValueString(), plan.Active); err != nil {
-		resp.Diagnostics.AddError("Error setting active state", err.Error())
-		return
+	// service_monitoring / service_notification are only re-issued when the
+	// corresponding attribute actually changes. The API treats them as toggles,
+	// so a no-op edit is wasted load on the rate limiter.
+	if !plan.Active.Equal(state.Active) {
+		if err := r.applyMonitoring(ctx, plan.ID.ValueString(), plan.Active); err != nil {
+			resp.Diagnostics.AddError("Error setting active state", err.Error())
+			return
+		}
 	}
-	if err := r.applyNotification(plan.ID.ValueString(), plan.Notification); err != nil {
-		resp.Diagnostics.AddError("Error setting notification state", err.Error())
-		return
+	if !plan.Notification.Equal(state.Notification) {
+		if err := r.applyNotification(ctx, plan.ID.ValueString(), plan.Notification); err != nil {
+			resp.Diagnostics.AddError("Error setting notification state", err.Error())
+			return
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -1134,7 +1209,7 @@ func (r *CheckResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	if _, err := r.client.Do(client.Request{
+	if _, err := r.client.Do(ctx, client.Request{
 		"command": "service_delete",
 		"id":      state.ID.ValueString(),
 	}); err != nil {
@@ -1639,12 +1714,12 @@ func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
 
 // applyMonitoring calls service_monitoring to enable or disable check execution.
 // When monitoring is null/unknown (not configured), it defaults to enabled (1).
-func (r *CheckResource) applyMonitoring(id string, monitoring types.Bool) error {
+func (r *CheckResource) applyMonitoring(ctx context.Context, id string, monitoring types.Bool) error {
 	val := 1
 	if !monitoring.IsNull() && !monitoring.IsUnknown() && !monitoring.ValueBool() {
 		val = 0
 	}
-	_, err := r.client.Do(client.Request{
+	_, err := r.client.Do(ctx, client.Request{
 		"command":    "service_monitoring",
 		"id":         id,
 		"monitoring": val,
@@ -1654,12 +1729,12 @@ func (r *CheckResource) applyMonitoring(id string, monitoring types.Bool) error 
 
 // applyNotification calls service_notification to enable or disable alert notifications.
 // When notification is null/unknown (not configured), it defaults to enabled (1).
-func (r *CheckResource) applyNotification(id string, notification types.Bool) error {
+func (r *CheckResource) applyNotification(ctx context.Context, id string, notification types.Bool) error {
 	val := 1
 	if !notification.IsNull() && !notification.IsUnknown() && !notification.ValueBool() {
 		val = 0
 	}
-	_, err := r.client.Do(client.Request{
+	_, err := r.client.Do(ctx, client.Request{
 		"command":      "service_notification",
 		"id":           id,
 		"notification": val,

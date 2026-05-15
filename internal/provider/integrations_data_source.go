@@ -1,4 +1,4 @@
-package datasources
+package provider
 
 import (
 	"context"
@@ -90,7 +90,7 @@ func (d *IntegrationsDataSource) Configure(_ context.Context, req datasource.Con
 }
 
 func (d *IntegrationsDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	apiResp, err := d.client.Do(client.Request{"command": "get_integrations"})
+	apiResp, err := d.client.Do(ctx, client.Request{"command": "get_integrations"})
 	if err != nil {
 		if client.IsPermissionError(err) {
 			resp.Diagnostics.AddWarning("Insufficient permissions for get_integrations", err.Error())

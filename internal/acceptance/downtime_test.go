@@ -63,6 +63,7 @@ resource "serverguard24_downtime" "test" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckDowntimeDestroy,
 		Steps: []resource.TestStep{
 			// Create and verify all stored attributes.
 			{
@@ -107,6 +108,7 @@ resource "serverguard24_downtime" "test" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckDowntimeDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -143,6 +145,7 @@ func TestAccDowntime_recreation(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckDowntimeDestroy,
 		Steps: []resource.TestStep{
 			// Step 1: initial downtime.
 			{

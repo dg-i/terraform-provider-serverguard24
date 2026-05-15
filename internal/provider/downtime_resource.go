@@ -1,4 +1,4 @@
-package resources
+package provider
 
 import (
 	"context"
@@ -208,18 +208,19 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 		cmd["readonly"] = boolToInt(plan.ReadOnly.ValueBool())
 	}
 
-	apiResp, err := r.client.Do(cmd)
+	apiResp, err := r.client.Do(ctx, cmd)
 	if err != nil {
 		if client.IsAlreadyExists(err) {
 			// The API has no delete, so a previously-untracked downtime with the
-			// same params may still exist. Look it up by description to adopt it.
-			id, lookupErr := findDowntimeByDescription(r.client, plan.Description.ValueString())
+			// same params may still exist. Match on (description, hostname,
+			// starttime) to adopt the right record when descriptions collide.
+			id, lookupErr := findDowntime(ctx, r.client, plan.Description.ValueString(), plan.Hostname.ValueString(), startUnix)
 			if lookupErr != nil {
 				resp.Diagnostics.AddError("Downtime already exists and lookup failed", lookupErr.Error())
 				return
 			}
 			if id == "" {
-				resp.Diagnostics.AddError("Downtime already exists", "Could not locate the existing downtime by description. Remove it manually in the Serverguard24 UI.")
+				resp.Diagnostics.AddError("Downtime already exists", "Could not locate the existing downtime by (description, hostname, start_time). Remove it manually in the Serverguard24 UI.")
 				return
 			}
 			plan.ID = types.StringValue(id)
@@ -246,7 +247,7 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 			return
 		}
 		if len(services) > 0 {
-			if _, err := r.client.Do(client.Request{
+			if _, err := r.client.Do(ctx, client.Request{
 				"command":  "downtime_link",
 				"id":       plan.ID.ValueString(),
 				"services": services,
@@ -264,7 +265,7 @@ func (r *DowntimeResource) Create(ctx context.Context, req resource.CreateReques
 			return
 		}
 		if len(hosts) > 0 {
-			if _, err := r.client.Do(client.Request{
+			if _, err := r.client.Do(ctx, client.Request{
 				"command": "downtime_link",
 				"id":      plan.ID.ValueString(),
 				"hosts":   hosts,
@@ -311,7 +312,7 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 			resp.Diagnostics.AddWarning("Invalid services in state", invalidIDMessage(invalid))
 		}
 		if len(services) > 0 {
-			if _, err := r.client.Do(client.Request{
+			if _, err := r.client.Do(ctx, client.Request{
 				"command":  "downtime_unlink",
 				"id":       state.ID.ValueString(),
 				"services": services,
@@ -330,7 +331,7 @@ func (r *DowntimeResource) Delete(ctx context.Context, req resource.DeleteReques
 			resp.Diagnostics.AddWarning("Invalid hosts in state", invalidIDMessage(invalid))
 		}
 		if len(hosts) > 0 {
-			if _, err := r.client.Do(client.Request{
+			if _, err := r.client.Do(ctx, client.Request{
 				"command": "downtime_unlink",
 				"id":      state.ID.ValueString(),
 				"hosts":   hosts,
@@ -400,22 +401,35 @@ func parseRFC3339Unix(s string) (int64, error) {
 	return t.Unix(), nil
 }
 
-// findDowntimeByDescription looks up all downtimes and returns the ID of the
-// first one whose description matches. Returns "" if none match.
-func findDowntimeByDescription(c *client.Client, description string) (string, error) {
-	apiResp, err := c.Do(client.Request{"command": "get_downtimes"})
+// findDowntime looks up all downtimes and returns the ID of the one matching
+// (description, hostname, startUnix). Matching on the trio avoids adopting a
+// stale record when descriptions collide. Returns "" if none match.
+//
+// The API returns starttime as a string (Unix epoch); compare numerically to
+// be robust against future formatting changes.
+func findDowntime(ctx context.Context, c *client.Client, description, hostname string, startUnix int64) (string, error) {
+	apiResp, err := c.Do(ctx, client.Request{"command": "get_downtimes"})
 	if err != nil {
 		return "", fmt.Errorf("get_downtimes: %w", err)
 	}
 	var items []struct {
 		ID          json.Number `json:"id"`
 		Description string      `json:"description"`
+		Hostname    string      `json:"hostname"`
+		StartTime   json.Number `json:"starttime"`
 	}
 	if err := json.Unmarshal(apiResp.Data, &items); err != nil {
 		return "", fmt.Errorf("parsing get_downtimes response: %w", err)
 	}
 	for _, item := range items {
-		if item.Description == description {
+		if item.Description != description || item.Hostname != hostname {
+			continue
+		}
+		st, err := item.StartTime.Int64()
+		if err != nil {
+			continue
+		}
+		if st == startUnix {
 			return item.ID.String(), nil
 		}
 	}

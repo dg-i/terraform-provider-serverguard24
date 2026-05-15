@@ -1,4 +1,4 @@
-package datasources
+package provider
 
 import (
 	"context"
@@ -78,7 +78,7 @@ func (d *NodesDataSource) Configure(_ context.Context, req datasource.ConfigureR
 }
 
 func (d *NodesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	apiResp, err := d.client.Do(client.Request{"command": "get_nodes"})
+	apiResp, err := d.client.Do(ctx, client.Request{"command": "get_nodes"})
 	if err != nil {
 		if client.IsPermissionError(err) {
 			resp.Diagnostics.AddWarning("Insufficient permissions for get_nodes", err.Error())

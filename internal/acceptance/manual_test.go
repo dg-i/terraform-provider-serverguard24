@@ -70,7 +70,7 @@ func newManualClient(t *testing.T) *client.Client {
 // so callers can treat these resources as optional.
 func firstIDOrEmpty(t *testing.T, c *client.Client, command string) string {
 	t.Helper()
-	resp, err := c.Do(client.Request{"command": command})
+	resp, err := c.Do(t.Context(), client.Request{"command": command})
 	if err != nil {
 		if client.IsPermissionError(err) {
 			return ""
@@ -117,7 +117,7 @@ func TestAccManual_Create(t *testing.T) {
 	state := manualState{Suffix: suffix}
 
 	// ── host ──────────────────────────────────────────────────────────────────
-	hostResp, err := c.Do(client.Request{
+	hostResp, err := c.Do(t.Context(), client.Request{
 		"command": "host_add",
 		"name":    suffix + "-host",
 		"address": "8.8.8.8",
@@ -136,7 +136,7 @@ func TestAccManual_Create(t *testing.T) {
 	t.Logf("host created    id=%-8s  name=%s", state.HostID, suffix+"-host")
 
 	// ── contact ───────────────────────────────────────────────────────────────
-	contactResp, err := c.Do(client.Request{
+	contactResp, err := c.Do(t.Context(), client.Request{
 		"command":  "contact_add",
 		"name":     suffix + "-contact",
 		"language": "en",
@@ -157,7 +157,7 @@ func TestAccManual_Create(t *testing.T) {
 
 	// ── ping check ────────────────────────────────────────────────────────────
 	hostIDInt, _ := strconv.ParseInt(state.HostID, 10, 64)
-	checkResp, err := c.Do(client.Request{
+	checkResp, err := c.Do(t.Context(), client.Request{
 		"command":          "service_add",
 		"host_id":          hostIDInt,
 		"type":             40, // ping
@@ -187,7 +187,7 @@ func TestAccManual_Create(t *testing.T) {
 	// and clean up the record, working around the missing downtime_delete API.
 	startTime := time.Now().UTC().Add(1 * time.Hour).Truncate(time.Hour)
 	endTime := startTime.Add(2 * time.Hour)
-	downtimeResp, err := c.Do(client.Request{
+	downtimeResp, err := c.Do(t.Context(), client.Request{
 		"command":     "downtime_add",
 		"hostname":    suffix + "-host",
 		"starttime":   startTime.Unix(),
@@ -209,7 +209,7 @@ func TestAccManual_Create(t *testing.T) {
 	t.Logf("downtime created id=%-7s  desc=%s", state.DowntimeID, suffix+"-downtime")
 
 	// Link the check to the downtime so it appears in the UI.
-	if _, err := c.Do(client.Request{
+	if _, err := c.Do(t.Context(), client.Request{
 		"command":  "downtime_link",
 		"id":       state.DowntimeID,
 		"services": []int64{checkIDInt},
@@ -222,7 +222,7 @@ func TestAccManual_Create(t *testing.T) {
 	// ── distributor link (optional) ───────────────────────────────────────────
 	if distID := firstIDOrEmpty(t, c, "get_distributors"); distID != "" {
 		distIDInt, _ := strconv.ParseInt(distID, 10, 64)
-		if _, err := c.Do(client.Request{
+		if _, err := c.Do(t.Context(), client.Request{
 			"command":        "service_link_distributor",
 			"id":             checkIDInt,
 			"distributor_id": distIDInt,
@@ -240,7 +240,7 @@ func TestAccManual_Create(t *testing.T) {
 	// ── integration link (optional) ───────────────────────────────────────────
 	if intID := firstIDOrEmpty(t, c, "get_integrations"); intID != "" {
 		intIDInt, _ := strconv.ParseInt(intID, 10, 64)
-		if _, err := c.Do(client.Request{
+		if _, err := c.Do(t.Context(), client.Request{
 			"command":        "service_link_integration",
 			"id":             checkIDInt,
 			"integration_id": intIDInt,
@@ -295,7 +295,7 @@ func TestAccManual_Destroy(t *testing.T) {
 	// ── unlink distributor ────────────────────────────────────────────────────
 	if state.DistributorID != "" {
 		distIDInt, _ := strconv.ParseInt(state.DistributorID, 10, 64)
-		if _, err := c.Do(client.Request{
+		if _, err := c.Do(t.Context(), client.Request{
 			"command":        "service_unlink_distributor",
 			"id":             checkIDInt,
 			"distributor_id": distIDInt,
@@ -310,7 +310,7 @@ func TestAccManual_Destroy(t *testing.T) {
 	// ── unlink integration ────────────────────────────────────────────────────
 	if state.IntegrationID != "" {
 		intIDInt, _ := strconv.ParseInt(state.IntegrationID, 10, 64)
-		if _, err := c.Do(client.Request{
+		if _, err := c.Do(t.Context(), client.Request{
 			"command":        "service_unlink_integration",
 			"id":             checkIDInt,
 			"integration_id": intIDInt,
@@ -324,7 +324,7 @@ func TestAccManual_Destroy(t *testing.T) {
 
 	// ── delete check ──────────────────────────────────────────────────────────
 	if state.CheckID != "" {
-		if _, err := c.Do(client.Request{"command": "service_delete", "id": state.CheckID}); err != nil {
+		if _, err := c.Do(t.Context(), client.Request{"command": "service_delete", "id": state.CheckID}); err != nil {
 			t.Errorf("service_delete %s: %v", state.CheckID, err)
 			anyFailed = true
 		} else {
@@ -334,7 +334,7 @@ func TestAccManual_Destroy(t *testing.T) {
 
 	// ── downtime: unlink only (no downtime_delete in API) ─────────────────────
 	if state.DowntimeID != "" && state.CheckID != "" {
-		if _, err := c.Do(client.Request{
+		if _, err := c.Do(t.Context(), client.Request{
 			"command":  "downtime_unlink",
 			"id":       state.DowntimeID,
 			"services": []int64{checkIDInt},
@@ -348,7 +348,7 @@ func TestAccManual_Destroy(t *testing.T) {
 
 	// ── delete contact ────────────────────────────────────────────────────────
 	if state.ContactID != "" {
-		if _, err := c.Do(client.Request{"command": "contact_delete", "id": state.ContactID}); err != nil {
+		if _, err := c.Do(t.Context(), client.Request{"command": "contact_delete", "id": state.ContactID}); err != nil {
 			t.Errorf("contact_delete %s: %v", state.ContactID, err)
 			anyFailed = true
 		} else {
@@ -358,7 +358,7 @@ func TestAccManual_Destroy(t *testing.T) {
 
 	// ── delete host ───────────────────────────────────────────────────────────
 	if state.HostID != "" {
-		if _, err := c.Do(client.Request{"command": "host_delete", "id": state.HostID}); err != nil {
+		if _, err := c.Do(t.Context(), client.Request{"command": "host_delete", "id": state.HostID}); err != nil {
 			t.Errorf("host_delete %s: %v", state.HostID, err)
 			anyFailed = true
 		} else {

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+FEATURES:
+
+* **New Data Source:** `serverguard24_host` — look up an existing host by `id` or `name`.
+* **New Data Source:** `serverguard24_contact` — look up an existing contact by `id` or `name`.
+* **New Data Source:** `serverguard24_check` — look up an existing check by `id` (no bulk-list API exists, so name lookup is not supported).
+
+ENHANCEMENTS:
+
+* Provider now emits a plan-time warning when a config change attempts to clear an optional string field or disable a notification/bool flag that was previously set — the Serverguard24 API silently ignores both operations on edit, and the warning explains the workaround (`terraform taint` / dashboard).
+* Provider documentation now lists the known API asymmetries (no-op clears, missing `downtime_edit`/`downtime_delete`, overloaded error code 210, O(N×M) reads) so users hit them in docs rather than at apply time.
+* API errors are now exposed as a typed `*client.APIError` so error code classification (`IsNotFound`, `IsPermissionError`, `IsAlreadyExists`) no longer relies on substring matching.
+
+BUG FIXES:
+
+* `serverguard24_check`: `Read` now correctly recognises an out-of-band delete. `service_show` returns the undocumented code `300` (not `210`) for a deleted check; `IsNotFound` now treats both as "gone" so the resource is removed from state instead of failing the plan.
+
+INTERNAL:
+
+* Acceptance tests now verify deletion via `CheckDestroy` and ship with sweepers (`-sweep=all`) that clean up leftover `acc-*` hosts and contacts from failed runs.
+* `go.mod` baseline raised to `go 1.25.0` (matching `terraform-plugin-framework` v1.19.0) with an explicit `toolchain` directive.
+
 ## 0.1.2 (2026-04-27)
 
 FEATURES:
