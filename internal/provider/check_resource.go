@@ -95,9 +95,9 @@ func validRegions() []string {
 
 // sslVersion maps — the integer encoding of ssl_version differs per check type.
 //
-//   http / http_perf : 1=auto  2=tlsv1  3=sslv3
-//   ssl_cert         : 0=auto  1=tlsv1  2=sslv3
-//   smtp             : 0=none  1=tls    2=ssl
+//	http / http_perf : 1=auto  2=tlsv1  3=sslv3
+//	ssl_cert         : 0=auto  1=tlsv1  2=sslv3
+//	smtp             : 0=none  1=tls    2=ssl
 var (
 	sslVersionHTTPByName    = map[string]int64{"auto": 1, "tlsv1": 2, "sslv3": 3}
 	sslVersionHTTPByID      = map[int64]string{1: "auto", 2: "tlsv1", 3: "sslv3"}
@@ -136,27 +136,27 @@ var authTypeByCode = map[string]string{"0": "none", "b": "basic", "n": "ntlm"}
 
 // performance_none maps — http_perf, site_perf, local_web, cron: "unknown"/"critical" ↔ 0/1
 var performanceNoneByName = map[string]int64{"unknown": 0, "critical": 1}
-var performanceNoneByID   = map[int64]string{0: "unknown", 1: "critical"}
+var performanceNoneByID = map[int64]string{0: "unknown", 1: "critical"}
 
 // pop_type maps — email: "pop3"/"imap"/"pop3s"/"imaps" ↔ API int codes 110/143/995/993
 var popTypeByName = map[string]int64{"pop3": 110, "imap": 143, "pop3s": 995, "imaps": 993}
-var popTypeByID   = map[int64]string{110: "pop3", 143: "imap", 995: "pop3s", 993: "imaps"}
+var popTypeByID = map[int64]string{110: "pop3", 143: "imap", 995: "pop3s", 993: "imaps"}
 
 // delete_mode maps — email: "ok_only"/"all" ↔ API int codes 2/3
 var deleteModeByName = map[string]int64{"ok_only": 2, "all": 3}
-var deleteModeByID   = map[int64]string{2: "ok_only", 3: "all"}
+var deleteModeByID = map[int64]string{2: "ok_only", 3: "all"}
 
 // mongoConnectionByName — mongodb: "mongodb"/"mongodb_srv" ↔ API int codes 0/1
 var mongoConnectionByName = map[string]int64{"mongodb": 0, "mongodb_srv": 1}
-var mongoConnectionByID   = map[int64]string{0: "mongodb", 1: "mongodb_srv"}
+var mongoConnectionByID = map[int64]string{0: "mongodb", 1: "mongodb_srv"}
 
 // searchitem_none maps — local_web, system: "warning"/"critical"/"unknown" ↔ 1/2/3
 var searchItemNoneByName = map[string]int64{"warning": 1, "critical": 2, "unknown": 3}
-var searchItemNoneByID   = map[int64]string{1: "warning", 2: "critical", 3: "unknown"}
+var searchItemNoneByID = map[int64]string{1: "warning", 2: "critical", 3: "unknown"}
 
 // portscan_none maps — port_scan: "critical"/"unknown" ↔ 2/3
 var portscanNoneByName = map[string]int64{"critical": 2, "unknown": 3}
-var portscanNoneByID   = map[int64]string{2: "critical", 3: "unknown"}
+var portscanNoneByID = map[int64]string{2: "critical", 3: "unknown"}
 
 // sortedStringKeys returns the sorted keys of a map[string]T for use in error messages.
 func sortedStringKeys[T any](m map[string]T) []string {
@@ -448,33 +448,33 @@ type CheckResource struct {
 // CheckParamsModel holds type-specific check parameters.
 type CheckParamsModel struct {
 	// Common check params
-	Path               types.String  `tfsdk:"path"`
-	Timeout            types.Int64   `tfsdk:"timeout"`
-	Port               types.Int64   `tfsdk:"port"`
-	Ssl                types.Bool    `tfsdk:"ssl"`
-	SslVersion         types.String  `tfsdk:"ssl_version"`
-	CheckCert          types.Bool    `tfsdk:"check_cert"`
-	AuthType           types.String  `tfsdk:"auth_type"`
-	Login              types.String  `tfsdk:"login"`
-	Password           types.String  `tfsdk:"password"`
-	Username           types.String  `tfsdk:"username"`
-	Useragent          types.String  `tfsdk:"useragent"`
-	HostHeader         types.String  `tfsdk:"host_header"`
+	Path       types.String `tfsdk:"path"`
+	Timeout    types.Int64  `tfsdk:"timeout"`
+	Port       types.Int64  `tfsdk:"port"`
+	Ssl        types.Bool   `tfsdk:"ssl"`
+	SslVersion types.String `tfsdk:"ssl_version"`
+	CheckCert  types.Bool   `tfsdk:"check_cert"`
+	AuthType   types.String `tfsdk:"auth_type"`
+	Login      types.String `tfsdk:"login"`
+	Password   types.String `tfsdk:"password"`
+	Username   types.String `tfsdk:"username"`
+	Useragent  types.String `tfsdk:"useragent"`
+	HostHeader types.String `tfsdk:"host_header"`
 	// HTTP params
-	Searchitem         types.String  `tfsdk:"searchitem"`
-	Method             types.String  `tfsdk:"method"`
-	Postvars           types.String  `tfsdk:"postvars"`
-	Regex              types.String  `tfsdk:"regex"`
-	InvertRegex        types.Bool    `tfsdk:"invert_regex"`
-	HeaderRegex        types.String  `tfsdk:"header_regex"`
-	MinSize            types.Int64   `tfsdk:"min_size"`
-	MaxSize            types.Int64   `tfsdk:"max_size"`
-	Addheader1         types.String  `tfsdk:"addheader1"`
-	Addheader2         types.String  `tfsdk:"addheader2"`
-	Addheader3         types.String  `tfsdk:"addheader3"`
-	ContentType        types.String  `tfsdk:"content_type"`
-	StatusCode         types.Int64   `tfsdk:"status_code"`
-	Redirect           types.Bool    `tfsdk:"redirect"`
+	Searchitem  types.String `tfsdk:"searchitem"`
+	Method      types.String `tfsdk:"method"`
+	Postvars    types.String `tfsdk:"postvars"`
+	Regex       types.String `tfsdk:"regex"`
+	InvertRegex types.Bool   `tfsdk:"invert_regex"`
+	HeaderRegex types.String `tfsdk:"header_regex"`
+	MinSize     types.Int64  `tfsdk:"min_size"`
+	MaxSize     types.Int64  `tfsdk:"max_size"`
+	Addheader1  types.String `tfsdk:"addheader1"`
+	Addheader2  types.String `tfsdk:"addheader2"`
+	Addheader3  types.String `tfsdk:"addheader3"`
+	ContentType types.String `tfsdk:"content_type"`
+	StatusCode  types.Int64  `tfsdk:"status_code"`
+	Redirect    types.Bool   `tfsdk:"redirect"`
 	// Perf params
 	WarningThroughput  types.Float64 `tfsdk:"warning_throughput"`
 	WarningConnect     types.Float64 `tfsdk:"warning_connect"`
@@ -484,90 +484,90 @@ type CheckParamsModel struct {
 	CriticalRoundtrip  types.Float64 `tfsdk:"critical_roundtrip"`
 	PerformanceNone    types.String  `tfsdk:"performance_none"`
 	// SSL Cert params
-	Protocol           types.String  `tfsdk:"protocol"`
-	ValidityWarning    types.Int64   `tfsdk:"validity_warning"`
-	ValidityCritical   types.Int64   `tfsdk:"validity_critical"`
-	DifferentIP        types.String  `tfsdk:"different_ip"`
+	Protocol         types.String `tfsdk:"protocol"`
+	ValidityWarning  types.Int64  `tfsdk:"validity_warning"`
+	ValidityCritical types.Int64  `tfsdk:"validity_critical"`
+	DifferentIP      types.String `tfsdk:"different_ip"`
 	// Domain params
-	ExpectedIP1        types.String  `tfsdk:"expected_ip1"`
-	ExpectedIP2        types.String  `tfsdk:"expected_ip2"`
-	ExpectedIP3        types.String  `tfsdk:"expected_ip3"`
-	ExpectedIP4        types.String  `tfsdk:"expected_ip4"`
-	ExpectedIPLink     types.String  `tfsdk:"expected_iplink"`
-	DnsServer          types.String  `tfsdk:"dns_server"`
-	DnsRecord          types.String  `tfsdk:"dns_record"`
-	DnsAuth            types.String  `tfsdk:"dns_auth"`
+	ExpectedIP1    types.String `tfsdk:"expected_ip1"`
+	ExpectedIP2    types.String `tfsdk:"expected_ip2"`
+	ExpectedIP3    types.String `tfsdk:"expected_ip3"`
+	ExpectedIP4    types.String `tfsdk:"expected_ip4"`
+	ExpectedIPLink types.String `tfsdk:"expected_iplink"`
+	DnsServer      types.String `tfsdk:"dns_server"`
+	DnsRecord      types.String `tfsdk:"dns_record"`
+	DnsAuth        types.String `tfsdk:"dns_auth"`
 	// PING params
-	ResponseWarning    types.Int64   `tfsdk:"response_warning"`
-	ResponseCritical   types.Int64   `tfsdk:"response_critical"`
+	ResponseWarning  types.Int64 `tfsdk:"response_warning"`
+	ResponseCritical types.Int64 `tfsdk:"response_critical"`
 	// DNS params
-	DNSName            types.String  `tfsdk:"dns_name"`
+	DNSName types.String `tfsdk:"dns_name"`
 	// SMTP params
-	From               types.String  `tfsdk:"from"`
+	From types.String `tfsdk:"from"`
 	// Email params
-	SmtpPort           types.Int64   `tfsdk:"smtp_port"`
-	Sender             types.String  `tfsdk:"sender"`
-	Recipient          types.String  `tfsdk:"recipient"`
-	PopType            types.String  `tfsdk:"pop_type"`
-	PopHost            types.String  `tfsdk:"pop_host"`
-	PopUser            types.String  `tfsdk:"pop_user"`
-	PopPassword        types.String  `tfsdk:"pop_password"`
-	DeleteMode         types.String  `tfsdk:"delete_mode"`
-	TimeWarning        types.Int64   `tfsdk:"time_warning"`
-	TimeCritical       types.Int64   `tfsdk:"time_critical"`
-	SmtpUser           types.String  `tfsdk:"smtp_user"`
-	SmtpPassword       types.String  `tfsdk:"smtp_password"`
-	SmtpTls            types.Bool    `tfsdk:"smtp_tls"`
-	SmtpHeader1        types.String  `tfsdk:"smtp_header1"`
+	SmtpPort     types.Int64  `tfsdk:"smtp_port"`
+	Sender       types.String `tfsdk:"sender"`
+	Recipient    types.String `tfsdk:"recipient"`
+	PopType      types.String `tfsdk:"pop_type"`
+	PopHost      types.String `tfsdk:"pop_host"`
+	PopUser      types.String `tfsdk:"pop_user"`
+	PopPassword  types.String `tfsdk:"pop_password"`
+	DeleteMode   types.String `tfsdk:"delete_mode"`
+	TimeWarning  types.Int64  `tfsdk:"time_warning"`
+	TimeCritical types.Int64  `tfsdk:"time_critical"`
+	SmtpUser     types.String `tfsdk:"smtp_user"`
+	SmtpPassword types.String `tfsdk:"smtp_password"`
+	SmtpTls      types.Bool   `tfsdk:"smtp_tls"`
+	SmtpHeader1  types.String `tfsdk:"smtp_header1"`
 	// Database params
-	Database           types.String  `tfsdk:"database"`
-	SQLQuery           types.String  `tfsdk:"sql_query"`
-	MongoConnection    types.String  `tfsdk:"mongo_connection"`
+	Database        types.String `tfsdk:"database"`
+	SQLQuery        types.String `tfsdk:"sql_query"`
+	MongoConnection types.String `tfsdk:"mongo_connection"`
 	// Local Web / Search params
-	SearchItemOk       types.String  `tfsdk:"searchitem_ok"`
-	SearchItemWarning  types.String  `tfsdk:"searchitem_warning"`
-	SearchItemCritical types.String  `tfsdk:"searchitem_critical"`
-	SearchItemNone     types.String  `tfsdk:"searchitem_none"`
-	BasicauthLogin     types.String  `tfsdk:"basicauth_login"`
-	BasicauthPassword  types.String  `tfsdk:"basicauth_password"`
-	DebugAddon         types.String  `tfsdk:"debug_addon"`
+	SearchItemOk       types.String `tfsdk:"searchitem_ok"`
+	SearchItemWarning  types.String `tfsdk:"searchitem_warning"`
+	SearchItemCritical types.String `tfsdk:"searchitem_critical"`
+	SearchItemNone     types.String `tfsdk:"searchitem_none"`
+	BasicauthLogin     types.String `tfsdk:"basicauth_login"`
+	BasicauthPassword  types.String `tfsdk:"basicauth_password"`
+	DebugAddon         types.String `tfsdk:"debug_addon"`
 	// Local / Intranet params
-	Command            types.String  `tfsdk:"command"`
-	Token              types.String  `tfsdk:"token"`
-	Silent             types.Int64   `tfsdk:"silent"`
+	Command types.String `tfsdk:"command"`
+	Token   types.String `tfsdk:"token"`
+	Silent  types.Int64  `tfsdk:"silent"`
 	// Cron params
-	Cron               types.String  `tfsdk:"cron"`
-	Timezone           types.String  `tfsdk:"timezone"`
+	Cron     types.String `tfsdk:"cron"`
+	Timezone types.String `tfsdk:"timezone"`
 	// System params
-	Def                types.String  `tfsdk:"def"`
+	Def types.String `tfsdk:"def"`
 	// Performance params
-	Performance        types.Bool    `tfsdk:"performance"`
-	PerformanceName    types.String  `tfsdk:"performance_name"`
-	PerformanceRegex   types.String  `tfsdk:"performance_regex"`
-	PerformanceUnit    types.String  `tfsdk:"performance_unit"`
-	PerformanceDigits  types.Int64   `tfsdk:"performance_digits"`
+	Performance       types.Bool   `tfsdk:"performance"`
+	PerformanceName   types.String `tfsdk:"performance_name"`
+	PerformanceRegex  types.String `tfsdk:"performance_regex"`
+	PerformanceUnit   types.String `tfsdk:"performance_unit"`
+	PerformanceDigits types.Int64  `tfsdk:"performance_digits"`
 	// Transaction params
-	TransactionID      types.String  `tfsdk:"transaction_id"`
+	TransactionID types.String `tfsdk:"transaction_id"`
 	// Selenium / Postman params
-	Definition         types.String  `tfsdk:"definition"`
-	Language           types.String  `tfsdk:"language"`
-	SuiteFilter        types.String  `tfsdk:"suite_filter"`
+	Definition  types.String `tfsdk:"definition"`
+	Language    types.String `tfsdk:"language"`
+	SuiteFilter types.String `tfsdk:"suite_filter"`
 	// Port Scan params
-	PortRange          types.String  `tfsdk:"port_range"`
-	PortscanNone       types.String  `tfsdk:"portscan_none"`
-	OpenPorts          types.String  `tfsdk:"open_ports"`
+	PortRange    types.String `tfsdk:"port_range"`
+	PortscanNone types.String `tfsdk:"portscan_none"`
+	OpenPorts    types.String `tfsdk:"open_ports"`
 }
 
 // CheckResourceModel holds all attributes for the check resource.
 type CheckResourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	HostID       types.String `tfsdk:"host_id"`
-	Type         types.String `tfsdk:"type"`
-	Shortname    types.String `tfsdk:"shortname"`
-	Description  types.String `tfsdk:"description"`
-	Address      types.String `tfsdk:"address"`
-	Region       types.String `tfsdk:"region"`
-	IPv6         types.Bool   `tfsdk:"ipv6"`
+	ID           types.String  `tfsdk:"id"`
+	HostID       types.String  `tfsdk:"host_id"`
+	Type         types.String  `tfsdk:"type"`
+	Shortname    types.String  `tfsdk:"shortname"`
+	Description  types.String  `tfsdk:"description"`
+	Address      types.String  `tfsdk:"address"`
+	Region       types.String  `tfsdk:"region"`
+	IPv6         types.Bool    `tfsdk:"ipv6"`
 	Interval     types.Float64 `tfsdk:"interval"`
 	NotifyAfter  types.Float64 `tfsdk:"notify_after"`
 	Reminder     types.Float64 `tfsdk:"reminder_interval"`
@@ -647,9 +647,9 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Check type. Valid values: `" + joinStrings(validCheckTypes(), "`, `") + "`.",
 				Validators:          []validator.String{checkTypeValidator{}},
 			},
-			"shortname":         strOpt("Short display name (max 40 characters)."),
-			"description":       strOpt("Description of this check."),
-			"address":           strOpt("Override address for this check."),
+			"shortname":   strOpt("Short display name (max 40 characters)."),
+			"description": strOpt("Description of this check."),
+			"address":     strOpt("Override address for this check."),
 			"region": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
@@ -704,33 +704,33 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				PlanModifiers:       []planmodifier.Object{useStateObjectModifier{}},
 				Attributes: map[string]schema.Attribute{
 					// Common
-					"path":               strOpt("URL path."),
-					"timeout":            intOpt("Timeout in seconds."),
-					"port":               intOpt("Port number."),
-					"ssl":                boolOpt("Enable SSL/TLS encryption."),
-					"ssl_version":        strOpt(`SSL/TLS protocol version. Valid values depend on check type — http/http_perf: "auto", "tlsv1", "sslv3"; ssl_cert: "auto", "tlsv1", "sslv3"; smtp: "none", "tls", "ssl".`),
-					"check_cert":         boolOpt("Verify SSL certificate."),
-					"auth_type":          strOpt(`Authentication method: "none", "basic", "ntlm".`),
-					"login":              strOpt("Login username for authentication."),
-					"password":           sensitiveStrOpt("Password."),
-					"username":           strOpt("Username (database checks)."),
-					"useragent":          strOpt("User agent string."),
-					"host_header":        strOpt("Alternative host header for load balancers."),
+					"path":        strOpt("URL path."),
+					"timeout":     intOpt("Timeout in seconds."),
+					"port":        intOpt("Port number."),
+					"ssl":         boolOpt("Enable SSL/TLS encryption."),
+					"ssl_version": strOpt(`SSL/TLS protocol version. Valid values depend on check type — http/http_perf: "auto", "tlsv1", "sslv3"; ssl_cert: "auto", "tlsv1", "sslv3"; smtp: "none", "tls", "ssl".`),
+					"check_cert":  boolOpt("Verify SSL certificate."),
+					"auth_type":   strOpt(`Authentication method: "none", "basic", "ntlm".`),
+					"login":       strOpt("Login username for authentication."),
+					"password":    sensitiveStrOpt("Password."),
+					"username":    strOpt("Username (database checks)."),
+					"useragent":   strOpt("User agent string."),
+					"host_header": strOpt("Alternative host header for load balancers."),
 					// HTTP
-					"searchitem":         strOpt("Search term that must be found on the page."),
-					"method":             strOpt("HTTP method (GET, POST, PUT, PATCH, DELETE)."),
-					"postvars":           strOpt("POST variables (field1=val1&field2=val2)."),
-					"regex":              strOpt("Search term as regular expression."),
-					"invert_regex":       boolOpt("Negate regex match."),
-					"header_regex":       strOpt("Regex matched against response headers."),
-					"min_size":           intOpt("Minimum page size in bytes."),
-					"max_size":           intOpt("Maximum page size in bytes."),
-					"addheader1":         strOpt("Additional HTTP header (Name: Value)."),
-					"addheader2":         strOpt("Additional HTTP header."),
-					"addheader3":         strOpt("Additional HTTP header."),
-					"content_type":       strOpt("Content-Type for the request."),
-					"status_code":        intOpt("Expected HTTP status code (0=ignore, default: 200)."),
-					"redirect":           boolOpt("Follow HTTP redirects (301/302)."),
+					"searchitem":   strOpt("Search term that must be found on the page."),
+					"method":       strOpt("HTTP method (GET, POST, PUT, PATCH, DELETE)."),
+					"postvars":     strOpt("POST variables (field1=val1&field2=val2)."),
+					"regex":        strOpt("Search term as regular expression."),
+					"invert_regex": boolOpt("Negate regex match."),
+					"header_regex": strOpt("Regex matched against response headers."),
+					"min_size":     intOpt("Minimum page size in bytes."),
+					"max_size":     intOpt("Maximum page size in bytes."),
+					"addheader1":   strOpt("Additional HTTP header (Name: Value)."),
+					"addheader2":   strOpt("Additional HTTP header."),
+					"addheader3":   strOpt("Additional HTTP header."),
+					"content_type": strOpt("Content-Type for the request."),
+					"status_code":  intOpt("Expected HTTP status code (0=ignore, default: 200)."),
+					"redirect":     boolOpt("Follow HTTP redirects (301/302)."),
 					// Perf
 					"warning_throughput":  floatOpt("Warning threshold for throughput (KB/s)."),
 					"warning_connect":     floatOpt("Warning threshold for connect time (ms)."),
@@ -740,45 +740,45 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"critical_roundtrip":  floatOpt("Critical threshold for roundtrip time (ms)."),
 					"performance_none":    strOpt(`Status when no performance value can be measured: "unknown", "critical".`),
 					// SSL Cert
-					"protocol":           strOpt("Protocol (HTTPS, SMTPS, IMAPS, POP3S)."),
-					"validity_warning":   intOpt("Warn when cert expires within N days."),
-					"validity_critical":  intOpt("Alert when cert expires within N days."),
-					"different_ip":       strOpt("Alternative node IP for load balancers."),
+					"protocol":          strOpt("Protocol (HTTPS, SMTPS, IMAPS, POP3S)."),
+					"validity_warning":  intOpt("Warn when cert expires within N days."),
+					"validity_critical": intOpt("Alert when cert expires within N days."),
+					"different_ip":      strOpt("Alternative node IP for load balancers."),
 					// Domain
-					"expected_ip1":       strOpt("Expected IP address or domain."),
-					"expected_ip2":       strOpt("Additional expected address."),
-					"expected_ip3":       strOpt("Additional expected address."),
-					"expected_ip4":       strOpt("Additional expected address."),
-					"expected_iplink":    strOpt("Address link logic (OR, AND, ALL)."),
-					"dns_server":         strOpt("DNS server to use."),
-					"dns_record":         strOpt("DNS record type (A, AAAA, CNAME, MX)."),
-					"dns_auth":           strOpt("DNS server must be authoritative."),
+					"expected_ip1":    strOpt("Expected IP address or domain."),
+					"expected_ip2":    strOpt("Additional expected address."),
+					"expected_ip3":    strOpt("Additional expected address."),
+					"expected_ip4":    strOpt("Additional expected address."),
+					"expected_iplink": strOpt("Address link logic (OR, AND, ALL)."),
+					"dns_server":      strOpt("DNS server to use."),
+					"dns_record":      strOpt("DNS record type (A, AAAA, CNAME, MX)."),
+					"dns_auth":        strOpt("DNS server must be authoritative."),
 					// PING
-					"response_warning":   intOpt("Warning response time (ms)."),
-					"response_critical":  intOpt("Critical response time (ms)."),
+					"response_warning":  intOpt("Warning response time (ms)."),
+					"response_critical": intOpt("Critical response time (ms)."),
 					// DNS
-					"dns_name":           strOpt("DNS name to resolve."),
+					"dns_name": strOpt("DNS name to resolve."),
 					// SMTP
-					"from":               strOpt("From address for SMTP MAILTO command."),
+					"from": strOpt("From address for SMTP MAILTO command."),
 					// Email
-					"smtp_port":          intOpt("SMTP port for email checks."),
-					"sender":             strOpt("Sender email address."),
-					"recipient":          strOpt("Recipient email address."),
-					"pop_type":           strOpt(`Recipient mailbox type: "pop3", "imap", "pop3s", "imaps".`),
-					"pop_host":           strOpt("Mailbox server address."),
-					"pop_user":           strOpt("POP/IMAP username."),
-					"pop_password":       sensitiveStrOpt("POP/IMAP password."),
-					"delete_mode":        strOpt(`Email deletion mode: "ok_only" (delete only test emails that arrived OK), "all" (delete all emails).`),
-					"time_warning":       intOpt("Warning delivery time (minutes)."),
-					"time_critical":      intOpt("Critical delivery time (minutes)."),
-					"smtp_user":          strOpt("SMTP username."),
-					"smtp_password":      sensitiveStrOpt("SMTP password."),
-					"smtp_tls":           boolOpt("SMTP encryption."),
-					"smtp_header1":       strOpt("Additional SMTP header."),
+					"smtp_port":     intOpt("SMTP port for email checks."),
+					"sender":        strOpt("Sender email address."),
+					"recipient":     strOpt("Recipient email address."),
+					"pop_type":      strOpt(`Recipient mailbox type: "pop3", "imap", "pop3s", "imaps".`),
+					"pop_host":      strOpt("Mailbox server address."),
+					"pop_user":      strOpt("POP/IMAP username."),
+					"pop_password":  sensitiveStrOpt("POP/IMAP password."),
+					"delete_mode":   strOpt(`Email deletion mode: "ok_only" (delete only test emails that arrived OK), "all" (delete all emails).`),
+					"time_warning":  intOpt("Warning delivery time (minutes)."),
+					"time_critical": intOpt("Critical delivery time (minutes)."),
+					"smtp_user":     strOpt("SMTP username."),
+					"smtp_password": sensitiveStrOpt("SMTP password."),
+					"smtp_tls":      boolOpt("SMTP encryption."),
+					"smtp_header1":  strOpt("Additional SMTP header."),
 					// Database
-					"database":           strOpt("Database name."),
-					"sql_query":          strOpt("SQL query to execute."),
-					"mongo_connection":   strOpt(`MongoDB connection type: "mongodb" (standard URI) or "mongodb_srv" (SRV URI).`),
+					"database":         strOpt("Database name."),
+					"sql_query":        strOpt("SQL query to execute."),
+					"mongo_connection": strOpt(`MongoDB connection type: "mongodb" (standard URI) or "mongodb_srv" (SRV URI).`),
 					// Local Web / Search
 					"searchitem_ok":       strOpt("Search term indicating OK status."),
 					"searchitem_warning":  strOpt("Search term indicating Warning status."),
@@ -788,14 +788,14 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"basicauth_password":  sensitiveStrOpt("Basic Authentication password."),
 					"debug_addon":         strOpt("URL debug suffix."),
 					// Local / Intranet
-					"command":            strOpt("Command to run (local/intranet checks). Sent as 'cmd' to the API."),
-					"token":              sensitiveStrOpt("Check token (e.g. intranet/NCPA). Generated by Serverguard24 when omitted."),
-					"silent":             intOpt("Warning after x minutes of silence (0=disabled)."),
+					"command": strOpt("Command to run (local/intranet checks). Sent as 'cmd' to the API."),
+					"token":   sensitiveStrOpt("Check token (e.g. intranet/NCPA). Generated by Serverguard24 when omitted."),
+					"silent":  intOpt("Warning after x minutes of silence (0=disabled)."),
 					// Cron
-					"cron":               strOpt("Cron expression."),
-					"timezone":           strOpt("Timezone for cron checks."),
+					"cron":     strOpt("Cron expression."),
+					"timezone": strOpt("Timezone for cron checks."),
 					// System
-					"def":                strOpt("System check definition."),
+					"def": strOpt("System check definition."),
 					// Performance
 					"performance":        boolOpt("Check returns performance data."),
 					"performance_name":   strOpt("Performance value label."),
@@ -803,15 +803,15 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"performance_unit":   strOpt("Performance value unit."),
 					"performance_digits": intOpt("Performance value decimal places (0-5)."),
 					// Transaction
-					"transaction_id":     strOpt("Transaction ID for TransAct checks."),
+					"transaction_id": strOpt("Transaction ID for TransAct checks."),
 					// Selenium / Postman
-					"definition":         strOpt("Script definition (Selenium/Postman)."),
-					"language":           strOpt("Script language (Selenium)."),
-					"suite_filter":       strOpt("Test suite filter (Selenium)."),
+					"definition":   strOpt("Script definition (Selenium/Postman)."),
+					"language":     strOpt("Script language (Selenium)."),
+					"suite_filter": strOpt("Test suite filter (Selenium)."),
 					// Port Scan
-					"port_range":         strOpt("Port range to scan."),
-					"portscan_none":      strOpt(`Status when port scan is not possible: "critical", "unknown".`),
-					"open_ports":         strOpt("Allowed open ports."),
+					"port_range":    strOpt("Port range to scan."),
+					"portscan_none": strOpt(`Status when port scan is not possible: "critical", "unknown".`),
+					"open_ports":    strOpt("Allowed open ports."),
 				},
 			},
 		},
@@ -1017,11 +1017,17 @@ type paramCheck struct {
 	unknown bool
 }
 
-func isSet(v interface{ IsNull() bool; IsUnknown() bool }) bool {
+func isSet(v interface {
+	IsNull() bool
+	IsUnknown() bool
+}) bool {
 	return !v.IsNull() && !v.IsUnknown()
 }
 
-func paramField(name string, v interface{ IsNull() bool; IsUnknown() bool }) paramCheck {
+func paramField(name string, v interface {
+	IsNull() bool
+	IsUnknown() bool
+}) paramCheck {
 	return paramCheck{name: name, isSet: isSet(v), unknown: v.IsUnknown()}
 }
 
@@ -1341,7 +1347,7 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 		setOptionalString(cmd, "method", p.Method)
 		setOptionalString(cmd, "postvars", p.Postvars)
 		setOptionalString(cmd, "regex", p.Regex)
-		setOptionalBoolAsInt("invert-regex", p.InvertRegex) // API uses hyphen
+		setOptionalBoolAsInt("invert-regex", p.InvertRegex)   // API uses hyphen
 		setOptionalString(cmd, "header-regex", p.HeaderRegex) // API uses hyphen
 		setOptionalInt("min_size", p.MinSize)
 		setOptionalInt("max_size", p.MaxSize)
