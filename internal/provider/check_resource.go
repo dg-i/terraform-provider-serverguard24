@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -362,17 +363,6 @@ func validCheckTypes() []string {
 	return names
 }
 
-func joinStrings(ss []string, sep string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += sep
-		}
-		result += s
-	}
-	return result
-}
-
 // regionValidator validates that the region attribute is a known region name or
 // a numeric string "1"–"5" (accepted for backwards compatibility).
 type regionValidator struct{}
@@ -382,7 +372,7 @@ func (v regionValidator) Description(_ context.Context) string {
 }
 
 func (v regionValidator) MarkdownDescription(_ context.Context) string {
-	return "must be one of: `" + joinStrings(validRegions(), "`, `") + "` (or legacy numeric IDs 1–5)"
+	return "must be one of: `" + strings.Join(validRegions(), "`, `") + "` (or legacy numeric IDs 1–5)"
 }
 
 func (v regionValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
@@ -404,7 +394,7 @@ func (v regionValidator) ValidateString(_ context.Context, req validator.StringR
 		"Invalid region",
 		fmt.Sprintf("%q is not a valid region. Valid names: %s (or numeric IDs 0–5)",
 			val,
-			joinStrings(validRegions(), ", "),
+			strings.Join(validRegions(), ", "),
 		),
 	)
 }
@@ -417,7 +407,7 @@ func (v checkTypeValidator) Description(_ context.Context) string {
 }
 
 func (v checkTypeValidator) MarkdownDescription(_ context.Context) string {
-	return "must be one of: `" + joinStrings(validCheckTypes(), "`, `") + "`"
+	return "must be one of: `" + strings.Join(validCheckTypes(), "`, `") + "`"
 }
 
 func (v checkTypeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
@@ -430,7 +420,7 @@ func (v checkTypeValidator) ValidateString(_ context.Context, req validator.Stri
 			"Invalid check type",
 			fmt.Sprintf("%q is not a valid check type. Valid values: %s",
 				req.ConfigValue.ValueString(),
-				joinStrings(validCheckTypes(), ", "),
+				strings.Join(validCheckTypes(), ", "),
 			),
 		)
 	}
@@ -644,7 +634,7 @@ func (r *CheckResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"type": schema.StringAttribute{
 				Required:            true,
 				Description:         "Check type name (e.g. http, ping, ssl_cert).",
-				MarkdownDescription: "Check type. Valid values: `" + joinStrings(validCheckTypes(), "`, `") + "`.",
+				MarkdownDescription: "Check type. Valid values: `" + strings.Join(validCheckTypes(), "`, `") + "`.",
 				Validators:          []validator.String{checkTypeValidator{}},
 			},
 			"shortname":   strOpt("Short display name (max 40 characters)."),
@@ -1129,19 +1119,15 @@ func (r *CheckResource) refreshFromAPI(ctx context.Context, id string, state *Ch
 
 	// service_show returns a single object. Flatten nested sub-objects so that
 	// applyCheckData can access all fields at the top level.
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(apiResp.Data, &raw); err != nil {
 		return false, err
 	}
-	if params, ok := raw["params"].(map[string]interface{}); ok {
-		for k, v := range params {
-			raw[k] = v
-		}
+	if params, ok := raw["params"].(map[string]any); ok {
+		maps.Copy(raw, params)
 	}
-	if notif, ok := raw["notification"].(map[string]interface{}); ok {
-		for k, v := range notif {
-			raw[k] = v
-		}
+	if notif, ok := raw["notification"].(map[string]any); ok {
+		maps.Copy(raw, notif)
 	}
 
 	applyCheckData(state, raw)
@@ -1455,7 +1441,7 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 // When the API returns a value for a key, it always overwrites the current state
 // (important for import where all fields start as null). When a key is absent
 // from the API response, the current state value is preserved.
-func applyCheckData(state *CheckResourceModel, raw map[string]interface{}) {
+func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 	// These helpers always write API values to state. This ensures import works
 	// correctly (all fields start null and get populated from the API).
 	getString := func(key string, cur types.String) types.String {

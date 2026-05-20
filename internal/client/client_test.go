@@ -9,21 +9,21 @@ import (
 	"testing"
 )
 
-func apiResponse(code, errmessage string, data interface{}) []byte {
+func apiResponse(code, errmessage string, data any) []byte {
 	if data == nil {
-		data = map[string]interface{}{}
+		data = map[string]any{}
 	}
-	raw, _ := json.Marshal([]map[string]interface{}{
+	raw, _ := json.Marshal([]map[string]any{
 		{"code": code, "errmessage": errmessage, "data": data},
 	})
 	return raw
 }
 
-func apiResponseMessage(code, message string, data interface{}) []byte {
+func apiResponseMessage(code, message string, data any) []byte {
 	if data == nil {
-		data = map[string]interface{}{}
+		data = map[string]any{}
 	}
-	raw, _ := json.Marshal([]map[string]interface{}{
+	raw, _ := json.Marshal([]map[string]any{
 		{"code": code, "message": message, "data": data},
 	})
 	return raw

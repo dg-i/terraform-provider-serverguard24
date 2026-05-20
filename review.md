@@ -334,3 +334,115 @@ If prioritizing for an OSS launch:
 Solid v0.1.x work — tests are real, GoReleaser/GPG is set up properly, the API
 quirks are mostly handled, the link-resource factory is genuinely nice. The
 above is what you'd polish before putting the company name on it.
+
+---
+
+## Implementation status — 2026-05-15
+
+Recording where each review item stands after PR #5, PR #7, and the §6 cleanup
+that follows. Items left as-is include the rationale for the decision.
+
+### §1 Project structure
+**Done in PR #5.** Collapsed `internal/datasources/*` and `internal/resources/*`
+into a single `internal/provider/` package; files renamed to `_resource.go` /
+`_data_source.go`. `internal/client/` kept separate as recommended.
+
+### §2 Resource ↔ data source parity
+**Done in PR #5.** New data sources: `serverguard24_host` (id|name),
+`serverguard24_contact` (id|name), `serverguard24_check` (id only — the API
+has no bulk-list endpoint for checks; documented in the data source schema).
+
+The check-import noisy-diff caveat (Create stores plan values; Read returns
+more fields) is **still open**. Fix is to call `refreshFromAPI` at the end of
+Create, but it interacts with `host_id` (not returned by `service_show`) and
+needs its own design pass — separate task.
+
+### §3 Bugs
+
+All items closed in PR #5.
+
+| Item | Resolution |
+|---|---|
+| 3.1 Notification flags can't be turned off | Plan-time warning (`warnIfClearingBool`). Took the review's *option 2*; *option 1* (find what the API accepts for "false") not attempted — the live-account test cost exceeds the value once the warning surfaces the asymmetry at plan time. |
+| 3.2 String fields can't be cleared | Same warning pattern (`warnIfClearingString`). |
+| 3.3 Error classification by substring | Typed `client.APIError` + `errors.As`. `IsNotFound`, `IsPermissionError`, `IsAlreadyExists` rewired. |
+| 3.4 No context propagation | `client.Do(ctx, ...)`; every call site passes the framework-provided ctx; `retryablehttp.NewRequestWithContext` honors it under retries. |
+| 3.5 No retries / backoff | `hashicorp/go-retryablehttp` wraps the transport (3 retries, 500ms → 5s backoff, `PassthroughErrorHandler` so the final HTTP status surfaces back to our own status check). |
+| 3.6 Downtime adoption picks first by description | `findDowntime` now matches on `(description, hostname, starttime)`. |
+| 3.7 `host.Read` is O(N) | 30s TTL mutex-serialised cache on `get_hosts`/`get_contacts`; host/contact CRUD calls `Invalidate…` explicitly so a follow-up Read sees the write. |
+| 3.8 Acceptance tests don't verify destruction | `CheckDestroy` wired into every test plus host/contact sweepers (`-sweep=all`). |
+| 3.9 Update unconditionally calls `service_monitoring`/`service_notification` | Only re-issued when the corresponding plan field differs from state. |
+
+### §4 Open-source readiness
+
+| Item | Status |
+|---|---|
+| `CONTRIBUTING.md` | Done in PR #5 |
+| `SECURITY.md` | Done in PR #5 |
+| `CODE_OF_CONDUCT.md` | **Open** — referenced by `CONTRIBUTING.md`, so currently a dangling link. Should be added before going public. |
+| `.github/dependabot.yml` | **Open** |
+| `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md` | **Open** |
+| `.github/pull_request_template.md` | **Open** |
+| `CODEOWNERS` | **Open** |
+| README badges | **Open** |
+| `AGENTS.md` / `CLAUDE.md` reshuffle | **Open** — both still at repo root |
+| `CHANGELOG` backfill + `Unreleased` section | **Open** |
+
+### §5 Build / CI nits
+**All done in PR #7.**
+
+- 5.1 Go version inconsistency — toolchain now pinned to `go1.26.3`, module baseline `go 1.25.0`.
+- 5.2 `golangci-lint` version drift — workflow uses `${{ env.GOLANGCI_LINT_VERSION }} = v2.11.4`, matching `.pre-commit-config.yaml`.
+- 5.3 `.golangci.yml` expansion — `default: standard` (errcheck, govet, ineffassign, staticcheck, unused) plus `gosec`, `misspell`, `unconvert`; `gofmt` as formatter. Tests opt out of `errcheck`, `bodyclose`, `gosec`.
+- 5.4 `govulncheck` CI job added; `golang.org/x/net` bumped to `v0.54.0` and toolchain to `1.26.3` to clear the findings.
+- 5.5 `go test -race` enabled (timeout raised to 180s to absorb race overhead).
+- 5.6 `testacc` now has `concurrency: { group: testacc-<workflow>, cancel-in-progress: false }` so parallel runs queue instead of racing on the 8-char random suffix.
+
+### §6 Code quality nits (non-blocking)
+
+Each item below either landed or was deliberately deferred. The deferred ones
+include the reasoning so future work doesn't re-litigate the decision.
+
+**`joinStrings` → `strings.Join`** — **Done.** Four call sites; helper deleted.
+
+**`interface{}` → `any` + `maps.Copy` for the `refreshFromAPI` flatten loops**
+— **Done.** Adjacent gopls-flagged style nits, swept across `check_resource.go`,
+the three permission-aware data sources, and `client_test.go`.
+
+**Table-driven encode/decode in `buildCheckCommand` / `applyCheckData`** —
+**Deferred.** The review's "shrink by 50%+" estimate assumes a struct-tag /
+reflect / codegen-driven approach. With plain typed-function tables — which is
+the only safe option given the framework's `types.X` opacity — each entry
+becomes a closure-wrapped accessor and the result is line-neutral or longer
+than the current code, not shorter. The drift risk the refactor would close
+is real but currently *theoretical* (no observed encode/decode mismatch); the
+refactor risk (≈100 fields without per-field test coverage) is concrete. The
+prerequisite for a safe attempt is a snapshot test: build a fully-populated
+`CheckResourceModel` per check type, call `buildCheckCommand` and the round-
+trip through `applyCheckData`, and freeze the JSON output as a golden file.
+Only then refactor against the golden. Worth doing as a dedicated PR with
+that scaffolding.
+
+**`paramsSetFields` allocates a new slice on every call** — **Deferred.** The
+returned slice's `paramCheck` *values* depend on the per-call
+`*CheckParamsModel`, so the slice fundamentally has to be rebuilt each call;
+a package-level cache only works if we cache something invariant. The
+current literal form is already maximally compact. The ~110-element
+allocation runs once per `ValidateConfig` (i.e. once per `terraform plan`)
+and is not a measured bottleneck.
+
+**`emptyList()`'s `types.ListValueMust`** — **Left as-is.** The review's own
+conclusion was "acceptable but consider" — the static value cannot fail at
+runtime.
+
+**`useStateXxxModifier` types (5 duplicates)** — **Left as-is.** The file
+comment at `check_resource.go:274-277` documents the intentional difference
+from the framework's `UseStateForUnknown`: the custom versions also fire when
+state is null, which is what makes `terraform import` leave un-returned
+fields *null* in plan output instead of *"known after apply"*. The review's
+suggested replacement (`default.StaticString("")` etc.) changes the
+semantics — those modifiers inject a default value, they don't preserve a
+null-state-for-unknown.
+
+**Sensitive markings on credential fields** — **Already correct** per the
+reviewer; nothing to do.

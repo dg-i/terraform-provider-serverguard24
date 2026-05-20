@@ -101,7 +101,7 @@ func (d *DistributorsDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		return
 	}
 
-	var raw []map[string]interface{}
+	var raw []map[string]any
 	if err := json.Unmarshal(apiResp.Data, &raw); err != nil {
 		resp.Diagnostics.AddError("Error parsing distributors", err.Error())
 		return
