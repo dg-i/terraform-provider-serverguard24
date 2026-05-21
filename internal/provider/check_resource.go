@@ -1007,63 +1007,17 @@ type paramCheck struct {
 	unknown bool
 }
 
-func isSet(v interface {
-	IsNull() bool
-	IsUnknown() bool
-}) bool {
-	return !v.IsNull() && !v.IsUnknown()
-}
-
-func paramField(name string, v interface {
-	IsNull() bool
-	IsUnknown() bool
-}) paramCheck {
-	return paramCheck{name: name, isSet: isSet(v), unknown: v.IsUnknown()}
-}
-
+// paramsSetFields iterates the ordered field manifest in
+// check_resource_fields.go and produces one paramCheck per param attribute.
+// Used by the ValidateConfig hook to detect unknown values and to reject
+// params that don't belong to the selected check type.
 func paramsSetFields(p *CheckParamsModel) []paramCheck {
-	return []paramCheck{
-		paramField("path", p.Path), paramField("timeout", p.Timeout), paramField("port", p.Port),
-		paramField("ssl", p.Ssl), paramField("ssl_version", p.SslVersion), paramField("check_cert", p.CheckCert),
-		paramField("auth_type", p.AuthType), paramField("login", p.Login), paramField("password", p.Password),
-		paramField("username", p.Username), paramField("useragent", p.Useragent), paramField("host_header", p.HostHeader),
-		paramField("searchitem", p.Searchitem), paramField("method", p.Method), paramField("postvars", p.Postvars),
-		paramField("regex", p.Regex), paramField("invert_regex", p.InvertRegex), paramField("header_regex", p.HeaderRegex),
-		paramField("min_size", p.MinSize), paramField("max_size", p.MaxSize),
-		paramField("addheader1", p.Addheader1), paramField("addheader2", p.Addheader2), paramField("addheader3", p.Addheader3),
-		paramField("content_type", p.ContentType), paramField("status_code", p.StatusCode), paramField("redirect", p.Redirect),
-		paramField("warning_throughput", p.WarningThroughput), paramField("warning_connect", p.WarningConnect),
-		paramField("warning_roundtrip", p.WarningRoundtrip), paramField("critical_throughput", p.CriticalThroughput),
-		paramField("critical_connect", p.CriticalConnect), paramField("critical_roundtrip", p.CriticalRoundtrip),
-		paramField("performance_none", p.PerformanceNone),
-		paramField("protocol", p.Protocol), paramField("validity_warning", p.ValidityWarning),
-		paramField("validity_critical", p.ValidityCritical), paramField("different_ip", p.DifferentIP),
-		paramField("expected_ip1", p.ExpectedIP1), paramField("expected_ip2", p.ExpectedIP2),
-		paramField("expected_ip3", p.ExpectedIP3), paramField("expected_ip4", p.ExpectedIP4),
-		paramField("expected_iplink", p.ExpectedIPLink), paramField("dns_server", p.DnsServer),
-		paramField("dns_record", p.DnsRecord), paramField("dns_auth", p.DnsAuth),
-		paramField("response_warning", p.ResponseWarning), paramField("response_critical", p.ResponseCritical),
-		paramField("dns_name", p.DNSName), paramField("from", p.From),
-		paramField("smtp_port", p.SmtpPort), paramField("sender", p.Sender), paramField("recipient", p.Recipient),
-		paramField("pop_type", p.PopType), paramField("pop_host", p.PopHost), paramField("pop_user", p.PopUser),
-		paramField("pop_password", p.PopPassword), paramField("delete_mode", p.DeleteMode),
-		paramField("time_warning", p.TimeWarning), paramField("time_critical", p.TimeCritical),
-		paramField("smtp_user", p.SmtpUser), paramField("smtp_password", p.SmtpPassword),
-		paramField("smtp_tls", p.SmtpTls), paramField("smtp_header1", p.SmtpHeader1),
-		paramField("database", p.Database), paramField("sql_query", p.SQLQuery), paramField("mongo_connection", p.MongoConnection),
-		paramField("searchitem_ok", p.SearchItemOk), paramField("searchitem_warning", p.SearchItemWarning),
-		paramField("searchitem_critical", p.SearchItemCritical), paramField("searchitem_none", p.SearchItemNone),
-		paramField("basicauth_login", p.BasicauthLogin), paramField("basicauth_password", p.BasicauthPassword),
-		paramField("debug_addon", p.DebugAddon),
-		paramField("command", p.Command), paramField("token", p.Token), paramField("silent", p.Silent),
-		paramField("cron", p.Cron), paramField("timezone", p.Timezone), paramField("def", p.Def),
-		paramField("performance", p.Performance), paramField("performance_name", p.PerformanceName),
-		paramField("performance_regex", p.PerformanceRegex), paramField("performance_unit", p.PerformanceUnit),
-		paramField("performance_digits", p.PerformanceDigits),
-		paramField("transaction_id", p.TransactionID), paramField("definition", p.Definition),
-		paramField("language", p.Language), paramField("suite_filter", p.SuiteFilter),
-		paramField("port_range", p.PortRange), paramField("portscan_none", p.PortscanNone), paramField("open_ports", p.OpenPorts),
+	out := make([]paramCheck, 0, len(paramSpecs))
+	for _, s := range paramSpecs {
+		set, unknown := s.isSet(p)
+		out = append(out, paramCheck{name: s.name, isSet: set, unknown: unknown})
 	}
+	return out
 }
 
 func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -1228,18 +1182,21 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 		cmd["type"] = checkTypeByName[m.Type.ValueString()]
 	}
 
-	setOptionalString(cmd, "shortname", m.Shortname)
-	// Only send description when non-empty — the API incorrectly uses the
-	// description value to overwrite the display name (shortname). Sending
-	// an empty description clears the name.
+	// Top-level simple fields (shortname/address/message strings, ipv6 + 20
+	// notification flag bools). Each spec.encode() picks the right helper.
+	for _, s := range modelSpecs {
+		s.encode(cmd, &m)
+	}
+
+	// Description has a special rule: the API treats an empty string as a
+	// signal to overwrite shortname with it, so we omit it entirely when
+	// empty rather than letting setOptionalString send "".
 	if !m.Description.IsNull() && !m.Description.IsUnknown() && m.Description.ValueString() != "" {
 		cmd["description"] = m.Description.ValueString()
 	}
-	setOptionalString(cmd, "address", m.Address)
-	// region is stored as a name string but the API expects an integer ID.
-	// Accept both named ("europe") and legacy numeric ("1") forms.
-	// region=0 ("individual") is NOT sent — it is the API default and the API
-	// rejects it as an invalid input value (valid inputs are 1–5 for service_add/edit).
+	// Region: schema accepts the named form ("europe"); the API expects 1-5.
+	// Legacy numeric strings are still accepted. region=0 is the API default
+	// and is rejected as an input, so we skip it.
 	if !m.Region.IsNull() && !m.Region.IsUnknown() {
 		val := m.Region.ValueString()
 		var regionID int64
@@ -1252,29 +1209,9 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 			cmd["region"] = regionID
 		}
 	}
-	setOptionalString(cmd, "message", m.Message)
 
-	// The API returns HTTP 500 when notification flags or bool fields are sent
-	// as 0. Omitting the field is equivalent to 0 (disabled/false), so we only
-	// send the value when it is explicitly true.
-	setOptionalBoolAsInt := func(key string, v types.Bool) {
-		if !v.IsNull() && !v.IsUnknown() && v.ValueBool() {
-			cmd[key] = 1
-		}
-	}
-	setOptionalFloat := func(key string, v types.Float64) {
-		if !v.IsNull() && !v.IsUnknown() {
-			cmd[key] = v.ValueFloat64()
-		}
-	}
-	setOptionalInt := func(key string, v types.Int64) {
-		if !v.IsNull() && !v.IsUnknown() {
-			cmd[key] = v.ValueInt64()
-		}
-	}
-
-	setOptionalBoolAsInt("ipv6", m.IPv6)
-	// The API rejects interval/notify_after/reminder_interval when 0; only send non-zero values.
+	// The API rejects interval/notify_after/reminder_interval when 0; only
+	// send non-zero values.
 	if !m.Interval.IsNull() && !m.Interval.IsUnknown() && m.Interval.ValueFloat64() != 0 {
 		cmd["interval"] = m.Interval.ValueFloat64()
 	}
@@ -1285,153 +1222,56 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 		cmd["reminder_interval"] = m.Reminder.ValueFloat64()
 	}
 
-	setOptionalBoolAsInt("email_critical", m.EmailCritical)
-	setOptionalBoolAsInt("email_warning", m.EmailWarning)
-	setOptionalBoolAsInt("email_ok", m.EmailOk)
-	setOptionalBoolAsInt("email_remind", m.EmailRemind)
-	setOptionalBoolAsInt("sms_critical", m.SmsCritical)
-	setOptionalBoolAsInt("sms_warning", m.SmsWarning)
-	setOptionalBoolAsInt("sms_ok", m.SmsOk)
-	setOptionalBoolAsInt("sms_remind", m.SmsRemind)
-	setOptionalBoolAsInt("push_critical", m.PushCritical)
-	setOptionalBoolAsInt("push_warning", m.PushWarning)
-	setOptionalBoolAsInt("push_ok", m.PushOk)
-	setOptionalBoolAsInt("push_remind", m.PushRemind)
-	setOptionalBoolAsInt("http_critical", m.HttpCritical)
-	setOptionalBoolAsInt("http_warning", m.HttpWarning)
-	setOptionalBoolAsInt("http_ok", m.HttpOk)
-	setOptionalBoolAsInt("http_remind", m.HttpRemind)
-	setOptionalBoolAsInt("phone_critical", m.PhoneCritical)
-	setOptionalBoolAsInt("phone_warning", m.PhoneWarning)
-	setOptionalBoolAsInt("phone_ok", m.PhoneOk)
-	setOptionalBoolAsInt("phone_remind", m.PhoneRemind)
-
-	// Type-specific parameters from the params block (sent flat at API top level)
+	// Type-specific parameters from the params block (sent flat at API top level).
 	if p := m.Params; p != nil {
-		setOptionalString(cmd, "path", p.Path)
-		setOptionalInt("timeout", p.Timeout)
-		setOptionalInt("port", p.Port)
-		setOptionalBoolAsInt("ssl", p.Ssl)
+		for _, s := range paramSpecs {
+			s.encode(cmd, p)
+		}
+
+		// Enum-mapped params: each has its own name↔ID map, and ssl_version
+		// additionally depends on the parent check's type. Encoded inline so
+		// the mappings remain visible alongside the field assignments.
 		if !p.SslVersion.IsNull() && !p.SslVersion.IsUnknown() {
 			nameToID, _ := sslVersionMaps(m.Type.ValueString())
 			if id, ok := nameToID[p.SslVersion.ValueString()]; ok {
 				cmd["ssl_version"] = id
 			}
 		}
-		setOptionalBoolAsInt("check_cert", p.CheckCert)
 		if !p.AuthType.IsNull() && !p.AuthType.IsUnknown() {
 			if code, ok := authTypeByName[p.AuthType.ValueString()]; ok {
 				cmd["auth_type"] = code
 			}
 		}
-		setOptionalString(cmd, "login", p.Login)
-		setOptionalString(cmd, "password", p.Password)
-		setOptionalString(cmd, "username", p.Username)
-		setOptionalString(cmd, "useragent", p.Useragent)
-		setOptionalString(cmd, "host_header", p.HostHeader)
-		setOptionalString(cmd, "searchitem", p.Searchitem)
-		setOptionalString(cmd, "method", p.Method)
-		setOptionalString(cmd, "postvars", p.Postvars)
-		setOptionalString(cmd, "regex", p.Regex)
-		setOptionalBoolAsInt("invert-regex", p.InvertRegex)   // API uses hyphen
-		setOptionalString(cmd, "header-regex", p.HeaderRegex) // API uses hyphen
-		setOptionalInt("min_size", p.MinSize)
-		setOptionalInt("max_size", p.MaxSize)
-		setOptionalString(cmd, "addheader1", p.Addheader1)
-		setOptionalString(cmd, "addheader2", p.Addheader2)
-		setOptionalString(cmd, "addheader3", p.Addheader3)
-		setOptionalString(cmd, "content_type", p.ContentType)
-		setOptionalInt("status_code", p.StatusCode)
-		setOptionalBoolAsInt("redirect", p.Redirect)
-		setOptionalFloat("warning_throughput", p.WarningThroughput)
-		setOptionalFloat("warning_connect", p.WarningConnect)
-		setOptionalFloat("warning_roundtrip", p.WarningRoundtrip)
-		setOptionalFloat("critical_throughput", p.CriticalThroughput)
-		setOptionalFloat("critical_connect", p.CriticalConnect)
-		setOptionalFloat("critical_roundtrip", p.CriticalRoundtrip)
 		if !p.PerformanceNone.IsNull() && !p.PerformanceNone.IsUnknown() {
 			if id, ok := performanceNoneByName[p.PerformanceNone.ValueString()]; ok {
 				cmd["performance_none"] = id
 			}
 		}
-		setOptionalString(cmd, "protocol", p.Protocol)
-		setOptionalInt("validity_warning", p.ValidityWarning)
-		setOptionalInt("validity_critical", p.ValidityCritical)
-		setOptionalString(cmd, "different_ip", p.DifferentIP)
-		setOptionalString(cmd, "expected_ip1", p.ExpectedIP1)
-		setOptionalString(cmd, "expected_ip2", p.ExpectedIP2)
-		setOptionalString(cmd, "expected_ip3", p.ExpectedIP3)
-		setOptionalString(cmd, "expected_ip4", p.ExpectedIP4)
-		setOptionalString(cmd, "expected_iplink", p.ExpectedIPLink)
-		setOptionalString(cmd, "dns_server", p.DnsServer)
-		setOptionalString(cmd, "dns_record", p.DnsRecord)
-		setOptionalString(cmd, "dns_auth", p.DnsAuth)
-		setOptionalInt("response_warning", p.ResponseWarning)
-		setOptionalInt("response_critial", p.ResponseCritical) // API uses this spelling (typo in API)
-		setOptionalString(cmd, "dns_name", p.DNSName)
-		setOptionalString(cmd, "from", p.From)
-		setOptionalInt("smtp_port", p.SmtpPort)
-		setOptionalString(cmd, "sender", p.Sender)
-		setOptionalString(cmd, "recipient", p.Recipient)
 		if !p.PopType.IsNull() && !p.PopType.IsUnknown() {
 			if id, ok := popTypeByName[p.PopType.ValueString()]; ok {
 				cmd["pop_type"] = id
 			}
 		}
-		setOptionalString(cmd, "pop_host", p.PopHost)
-		setOptionalString(cmd, "pop_user", p.PopUser)
-		setOptionalString(cmd, "pop_password", p.PopPassword)
 		if !p.DeleteMode.IsNull() && !p.DeleteMode.IsUnknown() {
 			if id, ok := deleteModeByName[p.DeleteMode.ValueString()]; ok {
 				cmd["delete_mode"] = id
 			}
 		}
-		setOptionalInt("time_warning", p.TimeWarning)
-		setOptionalInt("time_critical", p.TimeCritical)
-		setOptionalString(cmd, "smtp_user", p.SmtpUser)
-		setOptionalString(cmd, "smtp_password", p.SmtpPassword)
-		setOptionalBoolAsInt("smtp_tls", p.SmtpTls)
-		setOptionalString(cmd, "smtp_header1", p.SmtpHeader1)
-		setOptionalString(cmd, "database", p.Database)
-		setOptionalString(cmd, "sql_query", p.SQLQuery)
 		if !p.MongoConnection.IsNull() && !p.MongoConnection.IsUnknown() {
 			if id, ok := mongoConnectionByName[p.MongoConnection.ValueString()]; ok {
 				cmd["connection"] = id
 			}
 		}
-		setOptionalString(cmd, "searchitem_ok", p.SearchItemOk)
-		setOptionalString(cmd, "searchitem_warning", p.SearchItemWarning)
-		setOptionalString(cmd, "searchitem_critical", p.SearchItemCritical)
 		if !p.SearchItemNone.IsNull() && !p.SearchItemNone.IsUnknown() {
 			if id, ok := searchItemNoneByName[p.SearchItemNone.ValueString()]; ok {
 				cmd["searchitem_none"] = id
 			}
 		}
-		setOptionalString(cmd, "basicauth_login", p.BasicauthLogin)
-		setOptionalString(cmd, "basicauth_password", p.BasicauthPassword)
-		setOptionalString(cmd, "debug_addon", p.DebugAddon)
-		setOptionalString(cmd, "cmd", p.Command)
-		setOptionalString(cmd, "token", p.Token)
-		setOptionalInt("silent", p.Silent)
-		setOptionalString(cmd, "cron", p.Cron)
-		setOptionalString(cmd, "timezone", p.Timezone)
-		setOptionalString(cmd, "def", p.Def)
-		setOptionalBoolAsInt("performance", p.Performance)
-		setOptionalString(cmd, "performance_name", p.PerformanceName)
-		setOptionalString(cmd, "performance_regex", p.PerformanceRegex)
-		setOptionalString(cmd, "performance_unit", p.PerformanceUnit)
-		setOptionalInt("performance_digits", p.PerformanceDigits)
-		setOptionalString(cmd, "transaction_id", p.TransactionID)
-		setOptionalString(cmd, "definition", p.Definition)
-		setOptionalString(cmd, "language", p.Language)
-		setOptionalString(cmd, "suite_filter", p.SuiteFilter)
-		setOptionalString(cmd, "port_range", p.PortRange)
 		if !p.PortscanNone.IsNull() && !p.PortscanNone.IsUnknown() {
 			if id, ok := portscanNoneByName[p.PortscanNone.ValueString()]; ok {
 				cmd["portscan_none"] = id
 			}
 		}
-		setOptionalString(cmd, "open_ports", p.OpenPorts)
 	}
 
 	return cmd
@@ -1442,42 +1282,6 @@ func buildCheckCommand(command, id string, m CheckResourceModel) client.Request 
 // (important for import where all fields start as null). When a key is absent
 // from the API response, the current state value is preserved.
 func applyCheckData(state *CheckResourceModel, raw map[string]any) {
-	// These helpers always write API values to state. This ensures import works
-	// correctly (all fields start null and get populated from the API).
-	getString := func(key string, cur types.String) types.String {
-		switch v := raw[key].(type) {
-		case string:
-			return types.StringValue(v)
-		case float64:
-			if v == float64(int64(v)) {
-				return types.StringValue(fmt.Sprintf("%d", int64(v)))
-			}
-			return types.StringValue(fmt.Sprintf("%g", v))
-		}
-		return cur
-	}
-	getBool := func(key string, cur types.Bool) types.Bool {
-		switch v := raw[key].(type) {
-		case float64:
-			return types.BoolValue(v == 1)
-		case bool:
-			return types.BoolValue(v)
-		}
-		return cur
-	}
-	getFloat := func(key string, cur types.Float64) types.Float64 {
-		if v, ok := raw[key].(float64); ok {
-			return types.Float64Value(v)
-		}
-		return cur
-	}
-	getInt := func(key string, cur types.Int64) types.Int64 {
-		if v, ok := raw[key].(float64); ok {
-			return types.Int64Value(int64(v))
-		}
-		return cur
-	}
-
 	// service_show returns the check type as a display name (e.g. "Intranet"),
 	// not as the integer ID. Map it back to the internal name.
 	if v, ok := raw["name"].(string); ok {
@@ -1495,15 +1299,17 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 		state.Notification = types.BoolValue(v == 1)
 	}
 
-	state.HostID = getString("host_id", state.HostID)
-	state.Shortname = getString("shortname", state.Shortname)
-	state.Description = getString("description", state.Description)
-	state.Address = getString("address", state.Address)
+	state.HostID = decodeString(raw, "host_id", state.HostID)
+	state.Description = decodeString(raw, "description", state.Description)
+	// Top-level simple fields (strings + bool flags).
+	for _, s := range modelSpecs {
+		s.decode(state, raw)
+	}
 	// region: API returns a numeric ID; normalize to the canonical name form.
-	// When the API returns 0 ("individual" / no specific region), do NOT update state —
-	// keep whatever the user configured (null if not set). This prevents region=0 from
-	// being injected into state and later sent back to the API, which rejects it (API
-	// only accepts region IDs 1–5 as valid inputs in service_add/edit).
+	// When the API returns 0 ("individual" / no specific region), do NOT
+	// update state — keep whatever the user configured (null if not set).
+	// This prevents region=0 from being injected into state and later sent
+	// back to the API, which rejects it (only 1–5 are valid inputs).
 	if v, ok := raw["region"].(float64); ok && int64(v) != 0 {
 		if name, ok := regionByID[int64(v)]; ok {
 			state.Region = types.StringValue(name)
@@ -1511,48 +1317,28 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			state.Region = types.StringValue(fmt.Sprintf("%g", v))
 		}
 	}
-	state.Message = getString("message", state.Message)
-	state.IPv6 = getBool("ipv6", state.IPv6)
-	// service_show uses "check_interval" instead of "interval", and returns it in
-	// seconds while service_add/service_edit expect minutes.
+	// service_show uses "check_interval" instead of "interval", and returns
+	// it in seconds while service_add/service_edit expect minutes.
 	if v, ok := raw["check_interval"].(float64); ok {
 		state.Interval = types.Float64Value(v / 60)
 	}
-	state.NotifyAfter = getFloat("notify_after", state.NotifyAfter)
+	state.NotifyAfter = decodeFloat(raw, "notify_after", state.NotifyAfter)
 	// service_show returns "reminder_after" in seconds; schema uses hours.
 	if v, ok := raw["reminder_after"].(float64); ok {
 		state.Reminder = types.Float64Value(v / 3600)
 	}
-	state.EmailCritical = getBool("email_critical", state.EmailCritical)
-	state.EmailWarning = getBool("email_warning", state.EmailWarning)
-	state.EmailOk = getBool("email_ok", state.EmailOk)
-	state.EmailRemind = getBool("email_remind", state.EmailRemind)
-	state.SmsCritical = getBool("sms_critical", state.SmsCritical)
-	state.SmsWarning = getBool("sms_warning", state.SmsWarning)
-	state.SmsOk = getBool("sms_ok", state.SmsOk)
-	state.SmsRemind = getBool("sms_remind", state.SmsRemind)
-	state.PushCritical = getBool("push_critical", state.PushCritical)
-	state.PushWarning = getBool("push_warning", state.PushWarning)
-	state.PushOk = getBool("push_ok", state.PushOk)
-	state.PushRemind = getBool("push_remind", state.PushRemind)
-	state.HttpCritical = getBool("http_critical", state.HttpCritical)
-	state.HttpWarning = getBool("http_warning", state.HttpWarning)
-	state.HttpOk = getBool("http_ok", state.HttpOk)
-	state.HttpRemind = getBool("http_remind", state.HttpRemind)
-	state.PhoneCritical = getBool("phone_critical", state.PhoneCritical)
-	state.PhoneWarning = getBool("phone_warning", state.PhoneWarning)
-	state.PhoneOk = getBool("phone_ok", state.PhoneOk)
-	state.PhoneRemind = getBool("phone_remind", state.PhoneRemind)
 
-	// Type-specific parameters into the params block
+	// Type-specific parameters into the params block.
 	if state.Params == nil {
 		state.Params = &CheckParamsModel{}
 	}
 	p := state.Params
-	p.Path = getString("path", p.Path)
-	p.Timeout = getInt("timeout", p.Timeout)
-	p.Port = getInt("port", p.Port)
-	p.Ssl = getBool("ssl", p.Ssl)
+	for _, s := range paramSpecs {
+		s.decode(p, raw)
+	}
+
+	// Enum-mapped params: each has its own ID↔name map, and ssl_version
+	// additionally depends on the parent check's type (already decoded above).
 	if v, ok := raw["ssl_version"].(float64); ok {
 		_, idToName := sslVersionMaps(state.Type.ValueString())
 		if name, found := idToName[int64(v)]; found {
@@ -1561,7 +1347,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.SslVersion = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.CheckCert = getBool("check_cert", p.CheckCert)
 	if v, ok := raw["auth_type"].(string); ok {
 		if name, found := authTypeByCode[v]; found {
 			p.AuthType = types.StringValue(name)
@@ -1569,31 +1354,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.AuthType = types.StringValue(v)
 		}
 	}
-	p.Login = getString("login", p.Login)
-	p.Password = getString("password", p.Password)
-	p.Username = getString("username", p.Username)
-	p.Useragent = getString("useragent", p.Useragent)
-	p.HostHeader = getString("host_header", p.HostHeader)
-	p.Searchitem = getString("searchitem", p.Searchitem)
-	p.Method = getString("method", p.Method)
-	p.Postvars = getString("postvars", p.Postvars)
-	p.Regex = getString("regex", p.Regex)
-	p.InvertRegex = getBool("invert-regex", p.InvertRegex)
-	p.HeaderRegex = getString("header-regex", p.HeaderRegex)
-	p.MinSize = getInt("min_size", p.MinSize)
-	p.MaxSize = getInt("max_size", p.MaxSize)
-	p.Addheader1 = getString("addheader1", p.Addheader1)
-	p.Addheader2 = getString("addheader2", p.Addheader2)
-	p.Addheader3 = getString("addheader3", p.Addheader3)
-	p.ContentType = getString("content_type", p.ContentType)
-	p.StatusCode = getInt("status_code", p.StatusCode)
-	p.Redirect = getBool("redirect", p.Redirect)
-	p.WarningThroughput = getFloat("warning_throughput", p.WarningThroughput)
-	p.WarningConnect = getFloat("warning_connect", p.WarningConnect)
-	p.WarningRoundtrip = getFloat("warning_roundtrip", p.WarningRoundtrip)
-	p.CriticalThroughput = getFloat("critical_throughput", p.CriticalThroughput)
-	p.CriticalConnect = getFloat("critical_connect", p.CriticalConnect)
-	p.CriticalRoundtrip = getFloat("critical_roundtrip", p.CriticalRoundtrip)
 	if v, ok := raw["performance_none"].(float64); ok {
 		if name, found := performanceNoneByID[int64(v)]; found {
 			p.PerformanceNone = types.StringValue(name)
@@ -1601,25 +1361,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.PerformanceNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.Protocol = getString("protocol", p.Protocol)
-	p.ValidityWarning = getInt("validity_warning", p.ValidityWarning)
-	p.ValidityCritical = getInt("validity_critical", p.ValidityCritical)
-	p.DifferentIP = getString("different_ip", p.DifferentIP)
-	p.ExpectedIP1 = getString("expected_ip1", p.ExpectedIP1)
-	p.ExpectedIP2 = getString("expected_ip2", p.ExpectedIP2)
-	p.ExpectedIP3 = getString("expected_ip3", p.ExpectedIP3)
-	p.ExpectedIP4 = getString("expected_ip4", p.ExpectedIP4)
-	p.ExpectedIPLink = getString("expected_iplink", p.ExpectedIPLink)
-	p.DnsServer = getString("dns_server", p.DnsServer)
-	p.DnsRecord = getString("dns_record", p.DnsRecord)
-	p.DnsAuth = getString("dns_auth", p.DnsAuth)
-	p.ResponseWarning = getInt("response_warning", p.ResponseWarning)
-	p.ResponseCritical = getInt("response_critial", p.ResponseCritical) // API uses this spelling (typo in API)
-	p.DNSName = getString("dns_name", p.DNSName)
-	p.From = getString("from", p.From)
-	p.SmtpPort = getInt("smtp_port", p.SmtpPort)
-	p.Sender = getString("sender", p.Sender)
-	p.Recipient = getString("recipient", p.Recipient)
 	if v, ok := raw["pop_type"].(float64); ok {
 		if name, found := popTypeByID[int64(v)]; found {
 			p.PopType = types.StringValue(name)
@@ -1627,9 +1368,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.PopType = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.PopHost = getString("pop_host", p.PopHost)
-	p.PopUser = getString("pop_user", p.PopUser)
-	p.PopPassword = getString("pop_password", p.PopPassword)
 	if v, ok := raw["delete_mode"].(float64); ok {
 		if name, found := deleteModeByID[int64(v)]; found {
 			p.DeleteMode = types.StringValue(name)
@@ -1637,14 +1375,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.DeleteMode = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.TimeWarning = getInt("time_warning", p.TimeWarning)
-	p.TimeCritical = getInt("time_critical", p.TimeCritical)
-	p.SmtpUser = getString("smtp_user", p.SmtpUser)
-	p.SmtpPassword = getString("smtp_password", p.SmtpPassword)
-	p.SmtpTls = getBool("smtp_tls", p.SmtpTls)
-	p.SmtpHeader1 = getString("smtp_header1", p.SmtpHeader1)
-	p.Database = getString("database", p.Database)
-	p.SQLQuery = getString("sql_query", p.SQLQuery)
 	if v, ok := raw["connection"].(float64); ok {
 		if name, found := mongoConnectionByID[int64(v)]; found {
 			p.MongoConnection = types.StringValue(name)
@@ -1652,9 +1382,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.MongoConnection = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.SearchItemOk = getString("searchitem_ok", p.SearchItemOk)
-	p.SearchItemWarning = getString("searchitem_warning", p.SearchItemWarning)
-	p.SearchItemCritical = getString("searchitem_critical", p.SearchItemCritical)
 	if v, ok := raw["searchitem_none"].(float64); ok {
 		if name, found := searchItemNoneByID[int64(v)]; found {
 			p.SearchItemNone = types.StringValue(name)
@@ -1662,25 +1389,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.SearchItemNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.BasicauthLogin = getString("basicauth_login", p.BasicauthLogin)
-	p.BasicauthPassword = getString("basicauth_password", p.BasicauthPassword)
-	p.DebugAddon = getString("debug_addon", p.DebugAddon)
-	p.Command = getString("cmd", p.Command)
-	p.Token = getString("token", p.Token)
-	p.Silent = getInt("silent", p.Silent)
-	p.Cron = getString("cron", p.Cron)
-	p.Timezone = getString("timezone", p.Timezone)
-	p.Def = getString("def", p.Def)
-	p.Performance = getBool("performance", p.Performance)
-	p.PerformanceName = getString("performance_name", p.PerformanceName)
-	p.PerformanceRegex = getString("performance_regex", p.PerformanceRegex)
-	p.PerformanceUnit = getString("performance_unit", p.PerformanceUnit)
-	p.PerformanceDigits = getInt("performance_digits", p.PerformanceDigits)
-	p.TransactionID = getString("transaction_id", p.TransactionID)
-	p.Definition = getString("definition", p.Definition)
-	p.Language = getString("language", p.Language)
-	p.SuiteFilter = getString("suite_filter", p.SuiteFilter)
-	p.PortRange = getString("port_range", p.PortRange)
 	if v, ok := raw["portscan_none"].(float64); ok {
 		if name, found := portscanNoneByID[int64(v)]; found {
 			p.PortscanNone = types.StringValue(name)
@@ -1688,7 +1396,6 @@ func applyCheckData(state *CheckResourceModel, raw map[string]any) {
 			p.PortscanNone = types.StringValue(fmt.Sprintf("%d", int64(v)))
 		}
 	}
-	p.OpenPorts = getString("open_ports", p.OpenPorts)
 
 	// If all params are null (e.g. blacklist type), set params to nil
 	// to avoid an empty params block in state.
