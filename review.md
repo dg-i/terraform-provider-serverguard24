@@ -379,14 +379,14 @@ All items closed in PR #5.
 |---|---|
 | `CONTRIBUTING.md` | Done in PR #5 |
 | `SECURITY.md` | Done in PR #5 |
-| `CODE_OF_CONDUCT.md` | **Open** — referenced by `CONTRIBUTING.md`, so currently a dangling link. Should be added before going public. |
-| `.github/dependabot.yml` | **Open** |
-| `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md` | **Open** |
-| `.github/pull_request_template.md` | **Open** |
-| `CODEOWNERS` | **Open** |
-| README badges | **Open** |
-| `AGENTS.md` / `CLAUDE.md` reshuffle | **Open** — both still at repo root |
-| `CHANGELOG` backfill + `Unreleased` section | **Open** |
+| `CODE_OF_CONDUCT.md` | Done. Pointer-style file at repo root linking to Contributor Covenant 2.1 (canonical text at contributor-covenant.org); reports routed via the dg-i.net contact page. CONTRIBUTING.md's link is no longer dangling. |
+| `.github/dependabot.yml` | Done. Weekly Mondays for both `gomod` and `github-actions`, with minor + patch updates grouped to keep the PR queue manageable. |
+| `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md` | Done. Bug template requests provider/Terraform/Go versions, minimal repro config, and full output (with `TF_LOG=DEBUG` hint); feature template requests use case, proposed HCL sketch, and Serverguard24 API support status. |
+| `.github/pull_request_template.md` | Done. Aligned with `CONTRIBUTING.md` — summary, type-of-change checklist, `make test/lint/generate` test plan, CHANGELOG reminder. |
+| `CODEOWNERS` | Done. `.github/CODEOWNERS` with `* @dg-i` as global owner. |
+| README badges | Done. CI status, latest release, Terraform Registry, Go Report Card, license — all in the header. Added an explicit `## Contributing` section and clarified the license as MPL 2.0 in the existing `## License` section. |
+| `AGENTS.md` / `CLAUDE.md` reshuffle | Done. `CLAUDE.md` symlink removed — Claude Code reads `AGENTS.md` directly, so the symlink was redundant. `AGENTS.md` stays at repo root. |
+| `CHANGELOG` backfill + `Unreleased` section | Done. `Unreleased` section was already populated in PR #5; added a brief `0.1.0` entry noting it was an internal tagged release superseded by the public `0.1.2` (one day apart, no Registry publish in between). |
 
 ### §5 Build / CI nits
 **All done in PR #7.**

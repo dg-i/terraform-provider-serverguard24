@@ -1,5 +1,11 @@
 # Terraform Provider for Serverguard24
 
+[![Test](https://github.com/dg-i/terraform-provider-serverguard24/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/dg-i/terraform-provider-serverguard24/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/dg-i/terraform-provider-serverguard24?sort=semver)](https://github.com/dg-i/terraform-provider-serverguard24/releases)
+[![Terraform Registry](https://img.shields.io/badge/registry-dg--i%2Fserverguard24-844FBA?logo=terraform&logoColor=white)](https://registry.terraform.io/providers/dg-i/serverguard24/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dg-i/terraform-provider-serverguard24)](https://goreportcard.com/report/github.com/dg-i/terraform-provider-serverguard24)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
+
 This Terraform provider enables managing [Serverguard24](https://www.serverguard24.de) monitoring resources as Infrastructure-as-Code.
 
 ## Requirements
@@ -143,6 +149,14 @@ make test
 make install
 ```
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
+development setup, testing, and PR guidelines. By participating, you agree
+to abide by the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues
+should be reported privately per [SECURITY.md](SECURITY.md).
+
 ## License
 
-This provider is developed and maintained by [DG-I](https://www.dg-i.net).
+Licensed under the [Mozilla Public License 2.0](LICENSE). Developed and
+maintained by [DG-I](https://www.dg-i.net).

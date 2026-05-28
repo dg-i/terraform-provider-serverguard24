@@ -49,3 +49,11 @@ ENHANCEMENTS:
 * All resources support `terraform import` / `tofu import`.
 * Data sources (`distributors`, `groups`, `integrations`, `nodes`) return an empty list on permission errors (API codes 220/270) instead of failing, allowing use in accounts without those features.
 * Acceptance test suite covering all resources and data sources (`make testacc`, requires `SG24_API_TOKEN`).
+
+## 0.1.0 (2026-04-26)
+
+Initial tagged development release. Not published to the Terraform Registry —
+the first public release was 0.1.2. Contained the foundational provider
+scaffolding, the initial implementations of all resources and data sources,
+import support, and the pre-commit / lint setup that the 0.1.2 release built
+on. See the 0.1.2 entry for the user-facing surface.

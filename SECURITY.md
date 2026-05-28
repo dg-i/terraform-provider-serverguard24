@@ -16,7 +16,7 @@ If you believe you have found a security vulnerability in this provider,
 
 Instead, report it privately by emailing:
 
-**security@dg-i.net**
+**support@dg-i.net**
 
 Please include:
 
@@ -24,10 +24,6 @@ Please include:
 - Steps to reproduce, including a minimal Terraform configuration if applicable
 - The provider version and your Go version
 - Any suggested mitigation, if you have one
-
-We will acknowledge receipt within 5 business days and aim to provide a more
-detailed response — including next steps and an expected fix timeline — within
-10 business days.
 
 ## Scope
 
