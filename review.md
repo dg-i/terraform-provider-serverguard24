@@ -410,18 +410,42 @@ include the reasoning so future work doesn't re-litigate the decision.
 the three permission-aware data sources, and `client_test.go`.
 
 **Table-driven encode/decode in `buildCheckCommand` / `applyCheckData`** —
-**Deferred.** The review's "shrink by 50%+" estimate assumes a struct-tag /
-reflect / codegen-driven approach. With plain typed-function tables — which is
-the only safe option given the framework's `types.X` opacity — each entry
-becomes a closure-wrapped accessor and the result is line-neutral or longer
-than the current code, not shorter. The drift risk the refactor would close
-is real but currently *theoretical* (no observed encode/decode mismatch); the
-refactor risk (≈100 fields without per-field test coverage) is concrete. The
-prerequisite for a safe attempt is a snapshot test: build a fully-populated
-`CheckResourceModel` per check type, call `buildCheckCommand` and the round-
-trip through `applyCheckData`, and freeze the JSON output as a golden file.
-Only then refactor against the golden. Worth doing as a dedicated PR with
-that scaffolding.
+**Done (2026-05-21).** Landed in two steps as the deferred plan required:
+
+1. *Scaffolding.* Added `check_resource_snapshot_test.go` with a kitchen-sink
+   `CheckResourceModel` and a matching flattened `service_show` response,
+   plus `testdata/*.golden.json` for `service_add`, `service_edit`, and
+   `applyCheckData`. Per-type `ssl_version` map cases (`http` / `http_perf` /
+   `ssl_cert` / `smtp`) are covered as table tests. Regenerate the goldens
+   with `go test ./internal/provider/ -run KitchenSink -update-golden`.
+2. *Refactor.* Introduced `check_resource_fields.go` with two ordered
+   manifests — `modelSpecs` for top-level `CheckResourceModel` fields,
+   `paramSpecs` for every `CheckParamsModel` field. Typed builders
+   (`paramStr` / `paramInt` / `paramBool` / `paramFloat` / `paramEnum`,
+   `modelStr` / `modelBool`) capture a typed accessor closure per entry so
+   encode/decode pick the right helper without interface dispatch.
+   `buildCheckCommand`, `applyCheckData`, and `paramsSetFields` are now
+   single loops over the relevant slice. Snapshot output is byte-identical
+   pre/post refactor (no golden update was needed). Net delta in
+   `check_resource.go`: −345 / +52.
+
+Fields that don't round-trip uniformly stay inline with a one-line reason:
+`description` (omit-when-empty), `region` (enum + numeric fallback),
+`interval` / `notify_after` / `reminder_interval` (omit-when-zero + unit
+conversion on decode), `active` / `notification` (separate API endpoints),
+and the seven enum-mapped params (`ssl_version`, `auth_type`,
+`performance_none`, `pop_type`, `delete_mode`, `mongo_connection`,
+`searchitem_none`, `portscan_none`). The enum params still appear in
+`paramSpecs` so `paramsSetFields` keeps surfacing them to `ValidateConfig`;
+their encode/decode closures are no-ops because the maps live inline next
+to the type-specific logic.
+
+The original review's "shrink by 50%+" estimate didn't materialise — the
+typed-closure approach is net ~−70 lines once the manifest file is counted,
+not the dramatic reduction a reflect/codegen approach would have produced.
+The actual win is the structural property the snapshot test now guards:
+every simple field has exactly one declaration site, and any future drift
+between encode and decode fails the golden compare immediately.
 
 **`paramsSetFields` allocates a new slice on every call** — **Deferred.** The
 returned slice's `paramCheck` *values* depend on the per-call
