@@ -26,7 +26,7 @@ jobs:
       # Required by the Terraform Registry: https://developer.hashicorp.com/terraform/tutorials/providers-plugin-framework/providers-plugin-framework-release-publish
       # Set up the GPG_PRIVATE_KEY and PASSPHRASE secrets in the repository settings.
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         id: import_gpg
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
