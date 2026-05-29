@@ -3,6 +3,8 @@ package provider
 import (
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/dg-i/terraform-provider-serverguard24/internal/client"
@@ -29,10 +31,11 @@ import (
 // via a closure over the typed model accessor so encode/decode can use the
 // correct setOptional*/decode* helper without an interface dispatch.
 type fieldSpec[S any] struct {
-	name   string
-	encode func(cmd client.Request, s *S)
-	decode func(s *S, raw map[string]any)
-	isSet  func(s *S) (set, unknown bool)
+	name      string
+	encode    func(cmd client.Request, s *S)
+	decode    func(s *S, raw map[string]any)
+	isSet     func(s *S) (set, unknown bool)
+	warnClear func(diags *diag.Diagnostics, p path.Path, state, plan *S)
 }
 
 // ── Builders ──────────────────────────────────────────────────────────────
@@ -47,6 +50,9 @@ func paramStr(n string, get func(*CheckParamsModel) *types.String, api ...string
 		encode: func(cmd client.Request, p *CheckParamsModel) { setOptionalString(cmd, key, *get(p)) },
 		decode: func(p *CheckParamsModel, raw map[string]any) { *get(p) = decodeString(raw, key, *get(p)) },
 		isSet:  isSetGeneric(get),
+		warnClear: func(diags *diag.Diagnostics, p path.Path, state, plan *CheckParamsModel) {
+			warnIfClearingString(diags, p, *get(state), *get(plan))
+		},
 	}
 }
 
@@ -77,6 +83,9 @@ func paramBool(n string, get func(*CheckParamsModel) *types.Bool, api ...string)
 		encode: func(cmd client.Request, p *CheckParamsModel) { setOptionalBoolAsInt(cmd, key, *get(p)) },
 		decode: func(p *CheckParamsModel, raw map[string]any) { *get(p) = decodeBool(raw, key, *get(p)) },
 		isSet:  isSetGeneric(get),
+		warnClear: func(diags *diag.Diagnostics, p path.Path, state, plan *CheckParamsModel) {
+			warnIfClearingBool(diags, p, *get(state), *get(plan))
+		},
 	}
 }
 
@@ -88,6 +97,24 @@ func paramEnum(n string, get func(*CheckParamsModel) *types.String) fieldSpec[Ch
 		encode: func(client.Request, *CheckParamsModel) {},
 		decode: func(*CheckParamsModel, map[string]any) {},
 		isSet:  isSetGeneric(get),
+		warnClear: func(diags *diag.Diagnostics, p path.Path, state, plan *CheckParamsModel) {
+			warnIfClearingString(diags, p, *get(state), *get(plan))
+		},
+	}
+}
+
+func warnIfClearingParams(diags *diag.Diagnostics, state, plan *CheckParamsModel) {
+	if state == nil {
+		return
+	}
+	if plan == nil {
+		plan = &CheckParamsModel{}
+	}
+	for _, s := range paramSpecs {
+		if s.warnClear == nil {
+			continue
+		}
+		s.warnClear(diags, path.Root("params").AtName(s.name), state, plan)
 	}
 }
 

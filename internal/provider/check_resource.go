@@ -987,18 +987,7 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		warnIfClearingBool(&resp.Diagnostics, path.Root(pp.name), pp.state, pp.plan)
 	}
 
-	// Params block: warn for the bool flags and a handful of common strings that
-	// users commonly edit. The full param list is too large to enumerate here;
-	// see the provider docs for the general caveat.
-	if state.Params != nil && plan.Params != nil {
-		sp, pp := state.Params, plan.Params
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("ssl"), sp.Ssl, pp.Ssl)
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("check_cert"), sp.CheckCert, pp.CheckCert)
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("invert_regex"), sp.InvertRegex, pp.InvertRegex)
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("redirect"), sp.Redirect, pp.Redirect)
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("smtp_tls"), sp.SmtpTls, pp.SmtpTls)
-		warnIfClearingBool(&resp.Diagnostics, path.Root("params").AtName("performance"), sp.Performance, pp.Performance)
-	}
+	warnIfClearingParams(&resp.Diagnostics, state.Params, plan.Params)
 }
 
 type paramCheck struct {

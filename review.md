@@ -470,3 +470,94 @@ null-state-for-unknown.
 
 **Sensitive markings on credential fields** — **Already correct** per the
 reviewer; nothing to do.
+
+---
+
+## QA verification — 2026-05-29
+
+Role: independent quality assurance pass over the mitigation claims above.
+
+### Verified as implemented
+
+- §1 project structure is implemented: resources and data sources now live in
+  `internal/provider/`; `internal/client/` remains separate.
+- §2 data-source parity is implemented in code and provider registration:
+  `serverguard24_host`, `serverguard24_contact`, and `serverguard24_check` are
+  present and registered. The check data source is correctly limited to
+  lookup-by-id because `service_show` has no bulk-list API.
+- §3.3, §3.4, and §3.5 are implemented: `client.APIError` is typed and matched
+  via `errors.As`; `Client.Do(ctx, ...)` propagates context into
+  `retryablehttp.NewRequestWithContext`; retryablehttp is configured with
+  bounded retries/backoff.
+- §3.6 is implemented: downtime adoption now matches
+  `(description, hostname, starttime)` instead of first description match.
+- §3.7 is implemented at the API-call level: `get_hosts` / `get_contacts` have
+  a 30s mutex-protected cache and host/contact CRUD invalidates it.
+- §3.8 is implemented for resources that can actually be verified through the
+  API: host/contact/check acceptance tests have `CheckDestroy`; downtime is
+  intentionally permissive because the API has no delete; host/contact sweepers
+  are registered.
+- §3.9 is implemented: `service_monitoring` and `service_notification` are
+  skipped unless the corresponding plan value differs from state.
+- §4 and §5 are mostly implemented: OSS support files, Dependabot, issue/PR
+  templates, CODEOWNERS, lint/race/govulncheck CI, and testacc concurrency are
+  present.
+- §6 table-driven check encode/decode refactor is implemented with golden
+  snapshot coverage.
+
+### Implemented
+
+1. **§3.2 string-clearing warning is implemented.** `paramSpecs` now
+   carries the warning behavior for every string-like `params {}` field
+   (`paramStr` and `paramEnum`) and `CheckResource.ModifyPlan` uses the shared
+   `warnIfClearingParams` helper. That closes the earlier gap for fields such
+   as `path`, `login`, `username`, `host_header`, `searchitem`, `regex`,
+   `expected_ip*`, `dns_name`, `sender`, `recipient`, `database`, `sql_query`,
+   `cron`, and `definition`, including the case where the whole `params {}`
+   block is removed.
+
+2. **§5 plan-time warning tests are covered.** Added focused
+   unit tests for `warnIfClearingString`, `warnIfClearingBool`, and
+   `warnIfClearingParams`, including removed `params {}` handling.
+
+### Still open
+
+1. **§2 check import noisy diff remains open, as documented.** Verified:
+   `CheckResource.Create` still stores the post-create plan directly and does
+   not call `refreshFromAPI`; `refreshFromAPI` is used by `Read` only. Keep this
+   as a real open task before claiming full import parity.
+
+2. **Docs drift remains after the implementation work.** `README.md` still
+   lists only the four original read-only data sources and omits the new
+   host/contact/check data sources. `README.md` also says Go `>= 1.26.2`, while
+   `go.mod` is `go 1.25.0` with `toolchain go1.26.3`. `AGENTS.md` still starts
+   with `# CLAUDE.md`, still says Go `1.21+` / Terraform Plugin Framework
+   `v1.4.2`, and its data-source table omits host/contact/check. Update these
+   docs so §2, §4, and §5.1 are consistently reflected outside the generated
+   registry docs.
+
+3. **Provider documentation should be clarified for §3.7.** The implementation
+   now caches full host/contact list responses, so the old "M API calls × N
+   hosts/contacts" problem is mitigated. The docs still say refresh
+   performance is `O(N×M)` without mentioning the cache. If keeping the
+   complexity warning, clarify that the remaining cost is local filtering over
+   cached full-list responses, not repeated full-list network calls.
+
+### Verification run
+
+- `go test ./...` — passed.
+- `go test -race ./...` — passed.
+- Acceptance tests were not run against a live Serverguard24 account in this QA
+  pass; their wiring was checked statically.
+
+### Implementation Note
+
+- `paramSpecs` carries the warning behaviour for string-like params
+  (`paramStr` and `paramEnum`) and bool params (`paramBool`), and
+  `CheckResource.ModifyPlan` calls the shared `warnIfClearingParams` helper
+  instead of maintaining a partial manual list.
+- Removing the whole `params {}` block is handled as clearing all previously
+  set params, so already-stored string/enum/bool values also produce warnings
+  in that case.
+- Focused unit tests cover string clearing, bool clearing, all string-like
+  param warnings, and removed `params {}` block handling.
