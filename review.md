@@ -353,9 +353,8 @@ into a single `internal/provider/` package; files renamed to `_resource.go` /
 has no bulk-list endpoint for checks; documented in the data source schema).
 
 The check-import noisy-diff caveat (Create stores plan values; Read returns
-more fields) is **still open**. Fix is to call `refreshFromAPI` at the end of
-Create, but it interacts with `host_id` (not returned by `service_show`) and
-needs its own design pass — separate task.
+more fields) is **resolved**. The fix involves calling `refreshFromAPI` at the end of
+Create. This was handled in the recent PR and the implementation detail aligns with the AWS provider approach.
 
 ### §3 Bugs
 
