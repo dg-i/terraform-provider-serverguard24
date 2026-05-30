@@ -60,12 +60,15 @@ The provider requires a Serverguard24 API token. You can provide it via:
 
 ## Data Sources
 
-| Data Source | Description |
-|---|---|
-| `serverguard24_groups` | Available host groups |
-| `serverguard24_distributors` | Available distributor lists |
-| `serverguard24_integrations` | Available integrations |
-| `serverguard24_nodes` | Available monitoring nodes |
+|| Data Source | Description |
+||---|---|
+|| `serverguard24_host` | Existing host (by id or name) |
+|| `serverguard24_contact` | Existing contact (by id or name) |
+|| `serverguard24_check` | Existing check (by id only) |
+|| `serverguard24_groups` | Available host groups |
+|| `serverguard24_distributors` | Available distributor lists |
+|| `serverguard24_integrations` | Available integrations |
+|| `serverguard24_nodes` | Available monitoring nodes |
 
 ## Example Usage
 
