@@ -478,6 +478,9 @@ Role: independent quality assurance pass over the mitigation claims above.
 
 ### Verified as implemented
 
+- Documentation drift resolved: `README.md`, `AGENTS.md` updated to reflect new data sources and current versions.
+
+
 - §1 project structure is implemented: resources and data sources now live in
   `internal/provider/`; `internal/client/` remains separate.
 - §2 data-source parity is implemented in code and provider registration:
@@ -526,14 +529,6 @@ Role: independent quality assurance pass over the mitigation claims above.
    not call `refreshFromAPI`; `refreshFromAPI` is used by `Read` only. Keep this
    as a real open task before claiming full import parity.
 
-2. **Docs drift remains after the implementation work.** `README.md` still
-   lists only the four original read-only data sources and omits the new
-   host/contact/check data sources. `README.md` also says Go `>= 1.26.2`, while
-   `go.mod` is `go 1.25.0` with `toolchain go1.26.3`. `AGENTS.md` still starts
-   with `# CLAUDE.md`, still says Go `1.21+` / Terraform Plugin Framework
-   `v1.4.2`, and its data-source table omits host/contact/check. Update these
-   docs so §2, §4, and §5.1 are consistently reflected outside the generated
-   registry docs.
 
 3. **Provider documentation should be clarified for §3.7.** The implementation
    now caches full host/contact list responses, so the old "M API calls × N
