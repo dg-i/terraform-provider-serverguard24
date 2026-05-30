@@ -11,7 +11,7 @@ description: |-
 
 Looks up an existing Serverguard24 host by `id` or `name`. Exactly one of `id` or `name` must be set.
 
-~> **Performance:** The underlying `get_hosts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side. Avoid using this data source in tight loops on large accounts.
+~> **Performance:** The underlying `get_hosts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side. A 30s cache with mutex-serialization prevents redundant fetches. Remaining cost is local filtering.
 
 
 

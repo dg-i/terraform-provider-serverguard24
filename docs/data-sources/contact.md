@@ -4,14 +4,14 @@ page_title: "serverguard24_contact Data Source - serverguard24"
 subcategory: ""
 description: |-
   Looks up an existing Serverguard24 contact by id or name. Exactly one of id or name must be set.
-  ~> Performance: The underlying get_contacts endpoint ignores the id filter and always returns the full account; the provider filters client-side.
+~> **Performance:** The underlying `get_contacts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side. A 30s cache with mutex-serialization prevents redundant fetches. Remaining cost is local filtering.
 ---
 
 # serverguard24_contact (Data Source)
 
 Looks up an existing Serverguard24 contact by `id` or `name`. Exactly one of `id` or `name` must be set.
 
-~> **Performance:** The underlying `get_contacts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side.
+~> **Performance:** The underlying `get_contacts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side. A 30s cache with mutex-serialization prevents redundant fetches. Remaining cost is local filtering.
 
 
 
