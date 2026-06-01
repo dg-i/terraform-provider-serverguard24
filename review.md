@@ -522,20 +522,18 @@ Role: independent quality assurance pass over the mitigation claims above.
    unit tests for `warnIfClearingString`, `warnIfClearingBool`, and
    `warnIfClearingParams`, including removed `params {}` handling.
 
+3. **Provider documentation is clarified for §3.7.** The provider and
+   host/contact data source docs now explain that `get_hosts` / `get_contacts`
+   still return full-account lists, but the provider uses a 30s
+   mutex-serialized cache to avoid redundant full-list network calls.
+   Remaining refresh cost is local filtering over cached responses.
+
 ### Still open
 
 1. **§2 check import noisy diff remains open, as documented.** Verified:
    `CheckResource.Create` still stores the post-create plan directly and does
    not call `refreshFromAPI`; `refreshFromAPI` is used by `Read` only. Keep this
    as a real open task before claiming full import parity.
-
-
-3. **Provider documentation should be clarified for §3.7.** The implementation
-   now caches full host/contact list responses, so the old "M API calls × N
-   hosts/contacts" problem is mitigated. The docs still say refresh
-   performance is `O(N×M)` without mentioning the cache. If keeping the
-   complexity warning, clarify that the remaining cost is local filtering over
-   cached full-list responses, not repeated full-list network calls.
 
 ### Verification run
 

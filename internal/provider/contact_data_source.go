@@ -39,7 +39,7 @@ func (d *ContactDataSource) Metadata(_ context.Context, req datasource.MetadataR
 func (d *ContactDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description:         "Looks up an existing Serverguard24 contact by id or name. Exactly one of id or name must be set.",
-		MarkdownDescription: "Looks up an existing Serverguard24 contact by `id` or `name`. Exactly one of `id` or `name` must be set.\n\n~> **Performance:** The underlying `get_contacts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side.",
+		MarkdownDescription: "Looks up an existing Serverguard24 contact by `id` or `name`. Exactly one of `id` or `name` must be set.\n\n~> **Performance:** The underlying `get_contacts` endpoint ignores the `id` filter and always returns the full account; the provider filters client-side. A 30s cache with mutex-serialization prevents redundant fetches. Remaining cost is local filtering.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Optional:            true,

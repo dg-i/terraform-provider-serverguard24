@@ -56,8 +56,9 @@ The Serverguard24 JSON API has several asymmetries that affect Terraform semanti
   via API.** Every attribute uses ` + "`ForceNew`" + ` and the resource is destroyed +
   recreated on change.
 - **Read endpoints ignore the ID filter.** ` + "`get_hosts`/`get_contacts`" + ` return
-  the full account; the provider filters client-side. Refresh performance is
-  O(N×M) for accounts with many resources.
+  the full account; the provider filters client-side. A 30s cache with mutex-
+  serialization prevents redundant full-list fetches. Remaining cost is local
+  filtering over cached responses, not repeated network calls.
 - **Error code 210 is overloaded.** It means both "invalid parameter" and
   "resource not found". The provider treats it conservatively as "gone".`
 
