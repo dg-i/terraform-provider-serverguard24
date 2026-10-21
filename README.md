@@ -159,6 +159,11 @@ development setup, testing, and PR guidelines. By participating, you agree
 to abide by the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues
 should be reported privately per [SECURITY.md](SECURITY.md).
 
+## AI-Generated Content
+
+This provider contains AI-generated code. Parts of the source code, tests
+and documentation were created with the help of AI coding assistants.
+
 ## License
 
 Licensed under the [Mozilla Public License 2.0](LICENSE). Developed and
