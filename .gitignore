@@ -18,6 +18,7 @@ dist/
 .DS_Store
 api-docs/
 .ssh/
+review.md
 
 # Manual acceptance-test state (created by 'make testacc-create')
 acc-manual-state.json
