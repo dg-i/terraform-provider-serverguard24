@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-21)
 
 FEATURES:
 
@@ -16,12 +16,13 @@ ENHANCEMENTS:
 
 BUG FIXES:
 
+* Security: built with Go 1.26.10 and updated dependencies (`golang.org/x/crypto` v0.58.0, `golang.org/x/net` v0.61.0, `google.golang.org/grpc` v1.83.2) to resolve published vulnerabilities in the standard library HTTP/2 implementation, `x/crypto` and `grpc`.
 * `serverguard24_check`: `Read` now correctly recognises an out-of-band delete. `service_show` returns the undocumented code `300` (not `210`) for a deleted check; `IsNotFound` now treats both as "gone" so the resource is removed from state instead of failing the plan.
 
 INTERNAL:
 
 * Acceptance tests now verify deletion via `CheckDestroy` and ship with sweepers (`-sweep=all`) that clean up leftover `acc-*` hosts and contacts from failed runs.
-* `go.mod` baseline raised to `go 1.25.0` (matching `terraform-plugin-framework` v1.19.0) with an explicit `toolchain` directive.
+* `go.mod` baseline raised to `go 1.25.0` (matching `terraform-plugin-framework` v1.19.0) with an explicit `toolchain` directive; subsequently raised to `go 1.26.0` (required by current `golang.org/x/*` modules) with toolchain `go1.26.10`.
 
 ## 0.1.2 (2026-04-27)
 

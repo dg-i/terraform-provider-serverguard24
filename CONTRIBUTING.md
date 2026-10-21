@@ -6,7 +6,7 @@ submit changes.
 
 ## Requirements
 
-- Go (see `go.mod` for the minimum version — currently 1.25)
+- Go (see `go.mod` for the minimum version — currently 1.26)
 - Terraform >= 1.6 or OpenTofu >= 1.6 for local end-to-end testing
 - A Serverguard24 API token for acceptance tests (set `SG24_API_TOKEN`)
 
