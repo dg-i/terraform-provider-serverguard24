@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 (2026-10-27)
+
+BUG FIXES:
+
+* Release: include `terraform-registry-manifest.json` in `SHA256SUMS` so the Terraform Registry accepts the release (previous releases failed with "missing SHA256 checksum for …_manifest.json").
+
 ## 0.2.0 (2026-10-21)
 
 FEATURES:
